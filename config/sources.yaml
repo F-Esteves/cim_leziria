@@ -1,0 +1,421 @@
+# Municípios da CIM Lezíria do Tejo
+municipios:
+  "1403": "Almeirim"
+  "1404": "Alpiarça"
+  "1103": "Azambuja"
+  "1405": "Benavente"
+  "1406": "Cartaxo"
+  "1407": "Chamusca"
+  "1409": "Coruche"
+  "1412": "Golegã"
+  "1414": "Rio Maior"
+  "1415": "Salvaterra de Magos"
+  "1416": "Santarém"
+
+# PostgreSQL
+database:
+  host:     "localhost"
+  port:     5432
+  dbname:   "cim_leziria"
+  user:     "postgres"
+  password: "1234"         
+
+# Pasta com os ficheiros raw 
+raw_dir: "data/raw"
+
+# =============================================================
+# CLUSTER 1 — GOVERNANÇA
+# =============================================================
+
+governanca:
+
+  participacao_civica:
+
+    ar:
+      ficheiro:    "Eleitores_eleicoes_AR.xlsx"
+      formato:     "xlsx"
+      skiprows:    11 
+      anos:        [2009, 2011, 2015, 2019, 2022, 2024, 2025]
+
+    autarquias:
+      ficheiro:    "Eleitores_eleicoes_AL.xlsx"
+      formato:     "xlsx"
+      skiprows:    11    
+      anos:        [2009, 2013, 2017, 2021, 2025]
+
+    presidenciais:
+      ficheiro:    "Eleitores_eleicoes_PR.xlsx"
+      formato:     "xlsx"
+      skiprows:    11    
+      anos:        [2001, 2006, 2011, 2016, 2021, 2026]
+
+    resultados_autarquias:
+      ficheiro:    "resultados_municipios.ods"
+      formato:     "ods"
+      ano:         2025
+      codigos_ods:
+        "1403": "140300"   # Almeirim
+        "1404": "140400"   # Alpiarça
+        "1103": "110300"   # Azambuja
+        "1405": "140500"   # Benavente
+        "1406": "140600"   # Cartaxo
+        "1407": "140700"   # Chamusca
+        "1409": "140900"   # Coruche
+        "1412": "141200"   # Golegã
+        "1414": "141400"   # Rio Maior
+        "1415": "141500"   # Salvaterra de Magos
+        "1416": "141600"   # Santarém
+
+  digital:
+
+    banda_larga:
+      ficheiro:    "Banda-larga.xls"
+      formato:     "xls"
+      skiprows:    10    
+      anos:        [2021, 2022, 2023, 2024]
+      unidade:     "acessos/100hab"
+
+    telefone:
+      ficheiro:    "Telefone.xls"
+      formato:     "xls"
+      skiprows:    10    
+      anos:        [2021, 2022, 2023, 2024]
+      unidade:     "acessos/100hab"
+
+    tv:
+      ficheiro:    "TV.xls"
+      formato:     "xls"
+      skiprows:    10    
+      anos:        [2021, 2022, 2023, 2024]
+      unidade:     "assinantes_absoluto"   
+
+# =============================================================
+# CLUSTER 2 — AMBIENTE
+# =============================================================
+
+ambiente:
+
+  energia:
+
+    consumos:
+      ficheiro:    "consumos-faturados-por-municipio.xlsx"
+      formato:     "xlsx"
+      col_municipio: "Concelho"
+      col_ano:       "Ano"
+      col_mes:       "Mês"
+      col_tensao:    "Nível de Tensão"
+      col_energia:   "Energia Ativa"   # kWh
+      col_codigo:    "coddistritoconcelho"   
+      tensao_baixa:  "Baixa Tensão"
+      tensao_alta:   "Muito Alta, Alta e Média Tensões"
+      anos:          [2020, 2021, 2022, 2023, 2024, 2025]
+
+    contadores:
+      ficheiro:    "contadores-de-energia.xlsx"
+      formato:     "xlsx"
+      col_municipio: "Concelho"
+      col_ano:       "Ano"
+      col_mes:       "Mês"
+      col_cpes:      "Número de CPE's"
+      col_smart:     "Inclui contador inteligente"
+      col_codigo:    "Código Concelho"   
+      anos:          [2022, 2023, 2024, 2025]
+
+    comunidades:
+      ficheiro:    "comunidades-de-energia.xlsx"
+      formato:     "xlsx"
+      col_municipio: "Concelho"
+      col_ano:       "Ano"
+      col_mes:       "Mês"
+      col_tipo:      "Tipo ACC/CER"
+      col_contagem:  "Contagem Tipo ACC/CER"
+      col_codigo:    "Código Concelho"   
+      anos:          [2024, 2025]
+
+  residuos:
+    ficheiro:    "Residuos-urbanos-geridos.xls"   
+    formato:     "xls"                             
+    skiprows:    10                                
+    anos:        [2021, 2022, 2023, 2024]
+
+# =============================================================
+# CLUSTER 3 — MOBILIDADE
+# =============================================================
+ 
+mobilidade:
+ 
+  veiculos:
+    ficheiro:    "Registo_propriedade_veiculos_novos.xls"
+    formato:     "xls"
+    skiprows:    10   # linhas 0-9 são metadados INE; linha 10 é o header de unidades
+    anos:        [2021, 2022, 2023, 2024]   # INE publica em ordem descendente (2024→2021)
+    # Estrutura: col[0]=código+nome ("1D31403: Almeirim")
+    # 4 anos × 4 tipos = 16 blocos de colunas
+    # Tipos por bloco: T:Total | 1:Ligeiros | 2:Pesados | 3:Tratores agrícolas
+    n_tipos:     4
+    unidade:     "veiculos_por_1000hab"
+ 
+  pontos_carregamento:
+ 
+    acesso:
+      ficheiro:    "Pontos_carregamento_tipo_acesso_2024.xls"
+      formato:     "xls"
+      skiprows:    10   # mesmo padrão INE
+      meses:       ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+      ano:         2024
+      # Estrutura: 12 meses × 3 tipos = 36 blocos
+      # Tipos por bloco: T:Total | 1:Público | 2:Privado
+      n_tipos:     3
+      # Nota: '-' no ficheiro = dado nulo/não aplicável → tratar como 0
+ 
+    tipo_ponto:
+      ficheiro:    "Pontos_carregamento_tipo_ponto_2024.xls"
+      formato:     "xls"
+      skiprows:    10   # mesmo padrão INE
+      meses:       ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+      ano:         2024
+      # Estrutura: 12 meses × 5 tipos = 60 blocos
+      # Tipos por bloco: T:Total | 1:Normal | 2:Semirrápido | 3:Rápido | 4:Ultrarápido
+      n_tipos:     5
+
+# =============================================================
+# CLUSTER 4 — MODOS DE VIDA
+# =============================================================
+ 
+modos_vida:
+ 
+  saude:
+ 
+    hab_medico:
+      ficheiro:    "Habitantes_por_médico_e_farmacêutico.xlsx"
+      formato:     "xlsx"
+      skiprows:    11   # padrão PORDATA
+      anos:        [2021, 2022, 2023, 2024]
+      # Métricas (blocos 0 e 1): hab_medico | hab_farmaceutico
+ 
+    profissionais:
+      ficheiro:    "Profissionais_de_saúde_médicos__dentistas__enfermeiros_e_farmacêuticos.xlsx"
+      formato:     "xlsx"
+      skiprows:    11
+      anos:        [2021, 2022, 2023, 2024]
+      # Métricas (blocos 0-3): medicos | enfermeiros | farmaceuticos | dentistas
+ 
+    utentes_csp:
+      ficheiro:       "utentes-inscritos-em-cuidados-de-saude-primarios.csv"
+      formato:        "csv"
+      sep:            ";"
+      encoding:       "utf-8"
+      col_aces:       "ACES/ULS"
+      col_periodo:    "Período"
+      col_inscritos:  "Utentes Inscritos CSP"
+      col_pct_mdf:    "% Total Utentes com MdF atribuído"
+      nome_aces:      "Lezíria"   # match parcial: "ACES Lezíria" e "CSP da ULS Lezíria"
+      anos:           [2021, 2022, 2023, 2024, 2025]
+ 
+    consultas_csp:
+      ficheiro:        "evolucao-das-consultas-medicas-nos-csp.csv"
+      formato:         "csv"
+      sep:             ";"
+      encoding:        "utf-8"
+      col_entidade:    "Entidade"
+      col_periodo:     "Período"
+      col_presenciais: "Nº Consultas Médicas Presenciais (QT)"
+      col_total:       "total_consultas"
+      nome_aces:       "Lezíria"
+      anos:            [2021, 2022, 2023, 2024, 2025]
+ 
+  seguranca:
+ 
+    acidentes_vitimas:
+      ficheiro:    "Acidentes_de_viação_com_vítimas.xlsx"
+      formato:     "xlsx"
+      skiprows:    11
+      anos:        [2021, 2022, 2023, 2024]
+      # Métrica única (bloco 0): acidentes_vitimas_1000hab
+ 
+    feridos_mortos:
+      ficheiro:    "Feridos_e_mortos_em_acidentes_de_viação.xlsx"
+      formato:     "xlsx"
+      skiprows:    11
+      anos:        [2021, 2022, 2023, 2024]
+      # Métricas (blocos 0 e 1): feridos_acidentes | mortos_acidentes
+ 
+    criminalidade:
+      ficheiro:    "Taxa_de_criminalidade.xls"
+      formato:     "xls"
+      anos:        [2021, 2022, 2023, 2024]   # INE publica em ordem descendente
+      # Estrutura: 4 anos × 7 categorias de crime (sem skiprows — leitura directa)
+      # Categorias: total | integridade_fisica | furto_esticao | furto_veiculo
+      #             | alcool | sem_habilitacao | patrimonio
+      # '…' = dado confidencial → tratado como None
+ 
+  educacao:
+ 
+    sem_escolaridade:
+      ficheiro:    "Proporção_da_população_residente_com_15_e_mais_anos_de_idade_sem_nenhum_nível_de_escolaridade_completo.csv"
+      formato:     "csv"
+      sep:         ";"
+      encoding:    "utf-8"
+      ano:         2021   # Censos 2021 — dado pontual
+      # Col HM = proporção total (HM), H = homens, M = mulheres
+ 
+    ensino_superior:
+      ficheiro:    "População_residente_com_o_ensino_superior_completo.csv"
+      formato:     "csv"
+      sep:         ";"
+      encoding:    "utf-8"
+      ano:         2021   # Censos 2021 — dado pontual
+      # Col 1 = total HM (valor absoluto)
+ 
+  turismo:
+ 
+    dormidas:
+      ficheiro:    "Dormidas_nos_alojamentos_turísticos.xlsx"
+      formato:     "xlsx"
+      skiprows:    11
+      anos:        [2021, 2022, 2023, 2024]
+      # Métrica única (bloco 0): dormidas_100hab
+ 
+  habitacao:
+ 
+    alojamentos:
+      ficheiro:    "Alojamentos_por_Localização_geográfica_à_data_dos_Censos.csv"
+      formato:     "csv"
+      sep:         ";"
+      encoding:    "utf-8"
+      ano:         2021   # Censos 2021 — dado pontual
+      # Colunas (por posição): [0]=geo, [1]=total, [2]=familiares,
+      #                        [5]=uso_sazonal, [6]=
+
+
+
+economia:
+
+  # ── 5.1 Emprego e Estrutura ─────────────────────────────────
+  emprego:
+
+    censos_bruto:
+      ficheiro: "Populacao-empregada-por-Local-de-residencia-Sexo-Setor-de-atividade-e-Situacao-na-profissao.xls"
+      formato: "xls"
+      ano: 2021                  # Censos — dado pontual
+      # Dimensões: Sexo × Setor de atividade × Situação na profissão
+      # Colunas esperadas após parse: codigo_ine | sexo | setor | situacao | valor
+      notas: "Taxa de emprego, estrutura setorial, conta própria, grandes empregadores"
+
+    conta_outrem:
+      ficheiro: "Populacao-empregada-por-conta-de-outrem-por-Localizacao-geografica-e-Profissao.xls"
+      formato: "xls"
+      skiprows: 10
+      anos: [2021, 2022, 2023, 2024]
+      notas: "Complemento Quadros de Pessoal — taxa conta própria"
+
+  # ── 5.2 Rendimento e Capacidade Fiscal ──────────────────────
+  rendimento:
+
+    rendimento_bruto:
+      ficheiro: "Rendimento-bruto-declarado.xls"
+      formato: "xls"
+      skiprows: 10
+      anos: [2018, 2019, 2020, 2021, 2022, 2023]
+      unidade: "k€"
+      notas: "Rendimento bruto total declarado (AT); ×1000/pop → per capita"
+
+    irs_liquidado:
+      ficheiro: "Imposto-sobre-o-rendimento-de-pessoas-singulares-liquidado.xls"
+      formato: "xls"
+      skiprows: 10
+      anos: [2018, 2019, 2020, 2021, 2022, 2023]
+      unidade: "k€"
+      notas: "IRS total liquidado (AT); usado também para taxa de esforço fiscal"
+
+    poder_compra_per_capita:
+      ficheiro: "Poder-de-compra-per-capita.xlsx"
+      formato: "xlsx"
+      skiprows: 11               # padrão PORDATA
+      anos: [1993, 1995, 2000, 2002, 2004, 2006, 2008, 2010, 2012, 2014, 2016, 2017, 2019, 2021, 2023]
+      unidade: "índice (base 100 = PT)"
+      notas: "Bienal; valor directo do dataset — índice de poder de compra per capita"
+
+    proporcao_poder_compra:
+      ficheiro: "Proporcao-de-poder-de-compra.xlsx"
+      formato: "xlsx"
+      skiprows: 11               # padrão PORDATA
+      anos: [1993, 1995, 2000, 2002, 2004, 2006, 2008, 2010, 2012, 2014, 2016, 2017, 2019, 2021, 2023]
+      unidade: "%"
+      notas: "Peso do município no total nacional; bienal"
+
+  # ── 5.3 Empresarialidade ────────────────────────────────────
+  empresarialidade:
+
+    nascimentos_mortes_sobrevivencia:
+      ficheiro: "Nascimentos-mortes-e-sobrevivencia-a-1-ano-de-empresas.xlsx"
+      formato: "xlsx"
+      skiprows: 11               # padrão PORDATA
+      # Blocos de colunas por ano: nascidas | cessadas | sobreviventes_1ano
+      # Ordem descendente (ano mais recente → mais antigo)
+      notas: >
+        Métricas: taxa_natalidade_emp_pct, taxa_mortalidade_emp_pct,
+        taxa_sobrevivencia_1ano_pct.
+        total_empresas = nascidas + cessadas no período.
+
+    volume_negocios:
+      ficheiro: "volume-de-negocios.xls"
+      formato: "xls"
+      skiprows: 10
+      anos: [2015, 2016, 2017, 2018, 2019]
+      # Estrutura: col[0]=código+nome, depois blocos por ano × sector CAE Rev.3
+      # Sectores: Total | A (agricultura) | B-F (indústria) | G-N (serviços) | O-U (outros)
+      notas: >
+        Métricas: vn_per_capita_e, estrutura_vn_agricultura_pct,
+        estrutura_vn_industria_pct, estrutura_vn_servicos_pct.
+        Último ano disponível: 2019 (NUTS 2013).
+
+  # ── Populações auxiliares (para métricas per capita) ────────
+  populacao:
+    pop_total_2021:
+      fonte: "INE — Censos 2021"
+      notas: "Carregado de dim_municipio ou config/populacao.yaml"
+    pop_ativa_2021:
+      fonte: "INE — Censos 2021"
+      notas: "Pop. activa 15-74 anos; usada na taxa de emprego"
+
+# =============================================================
+# CLUSTER 6 — SOCIEDADE
+# =============================================================
+
+sociedade:
+
+  nados_vivos:
+    ficheiro: "Nados-vivos-de-maes-residentes-em-Portugal-total-e-por-sexo.xlsx"
+    formato: "xlsx"
+    anos_serie: [1981, 2024]
+    unidade: "nados_vivos_absoluto"
+
+  obitos:
+    ficheiro: "Obitos-de-residentes-em-Portugal-total-e-por-sexo.xlsx"
+    formato: "xlsx"
+    anos_serie: [1981, 2024]
+    unidade: "obitos_absoluto"
+
+  pop_estrangeira:
+    ficheiro: "Populacao-estrangeira-com-estatuto-legal-de-residente-total-e-por-sexo.xlsx"
+    formato: "xlsx"
+    anos_serie: [2008, 2023]
+    unidade: "residentes_estrangeiros_absoluto"
+
+  censos_2021:
+    ficheiro: "Populacao-residente-por-Local-de-residencia.xls"
+    formato: "xls"
+    ano: 2021
+    unidade: "habitantes"
+
+  areas_2011:
+    ficheiro: "areas-e-populacao-por-municipio.xlsx"
+    formato: "xlsx"
+    ano: 2011
+    col_municipio: "Concelho"
+    col_area_m2: "Área (m2)"
+    col_pop: "População"
+    unidade_area: "m2"
