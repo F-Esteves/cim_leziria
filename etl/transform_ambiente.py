@@ -1,57 +1,17 @@
 import pandas as pd
-import numpy as np
-from pathlib import Path
 
-STAGING_DIR = Path("data/staging")
-
-MUNICIPIOS = {
-    "1403": "Almeirim",        "1404": "Alpiarça",
-    "1103": "Azambuja",        "1405": "Benavente",
-    "1406": "Cartaxo",         "1407": "Chamusca",
-    "1409": "Coruche",         "1412": "Golegã",
-    "1414": "Rio Maior",       "1415": "Salvaterra de Magos",
-    "1416": "Santarém",
-}
+from etl.utils import (
+    STAGING_DIR,
+    row_base, normalizar_scores, enforce_schema,
+)
 
 # Métricas onde menor = melhor (para normalização invertida)
-METRICAS_INVERTER = {
+_METRICAS_INVERTER = {
     "amb_taxa_aterro_pct",
     "amb_var_consumo_anual_pct",
 }
 
 ANOS_INCOMPLETOS = {2020, 2025}
-
-
-def normalizar(series: pd.Series, inverter: bool = False) -> pd.Series:
-    mn, mx = series.min(), series.max()
-    if mx == mn:
-        return pd.Series([0.5] * len(series), index=series.index)
-    norm = (series - mn) / (mx - mn)
-    return 1 - norm if inverter else norm
-
-
-def normalizar_scores(df: pd.DataFrame) -> pd.DataFrame:
-    df["valor_normalizado"] = np.nan
-    for (metrica, ano), grupo in df.groupby(["metrica_codigo", "ano"]):
-        vals = grupo["valor"].dropna()
-        if len(vals) < 2:
-            df.loc[grupo.index, "valor_normalizado"] = 0.5
-            continue
-        inv = metrica in METRICAS_INVERTER
-        df.loc[grupo.index, "valor_normalizado"] = normalizar(
-            df.loc[grupo.index, "valor"], inverter=inv
-        ).values
-    return df
-
-
-def row_base(codigo_ine, nome, ano, metrica, valor):
-    return {
-        "codigo_ine":     codigo_ine,
-        "nome":           nome,
-        "ano":            ano,
-        "metrica_codigo": metrica,
-        "valor":          valor,
-    }
 
 
 # ── 2.1 Energia — Consumos ─────────────────────────────────────
@@ -298,7 +258,8 @@ def main():
         [df_consumos, df_contadores, df_comunidades, df_residuos],
         ignore_index=True,
     )
-    df_all = normalizar_scores(df_all)
+    df_all = normalizar_scores(df_all, metricas_inverter=_METRICAS_INVERTER)
+    df_all = enforce_schema(df_all)
 
     # Alinhar schema com Governança (referência)
     df_all["valor_texto"] = None

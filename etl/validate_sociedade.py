@@ -1,38 +1,30 @@
-import pandas as pd
-import numpy as np
 import json
 import sys
-from pathlib import Path
 from datetime import datetime
 
-STAGING_DIR = Path("data/staging")
+import numpy as np
+import pandas as pd
 
-MUNICIPIOS = {
-    "1403": "Almeirim",        "1404": "Alpiarça",
-    "1103": "Azambuja",        "1405": "Benavente",
-    "1406": "Cartaxo",         "1407": "Chamusca",
-    "1409": "Coruche",         "1412": "Golegã",
-    "1414": "Rio Maior",       "1415": "Salvaterra de Magos",
-    "1416": "Santarém",
+from etl.utils import (
+    STAGING_DIR,
+    aviso, erro, ok, resetar_log,
+    get_avisos, get_erros,
+    check_cobertura, check_scores_normalizados,
+    imprimir_resumo_validacao,
+)
+
+_METRICAS_ESPERADAS = {
+    "soc_pop_total_cim", "soc_tx_natalidade", "soc_tx_mortalidade",
+    "soc_saldo_natural", "soc_pct_pop_estrangeira", "soc_densidade_pop",
+    "soc_variacao_pop_2011_2021", "soc_saldo_natural_acumulado",
 }
 
-METRICAS_ESPERADAS = {
-    "soc_pop_total_cim",
-    "soc_tx_natalidade",
-    "soc_tx_mortalidade",
-    "soc_saldo_natural",
-    "soc_pct_pop_estrangeira",
-    "soc_densidade_pop",
-    "soc_variacao_pop_2011_2021",
-    "soc_saldo_natural_acumulado",
-}
-
-METRICAS_INVERTER = {
+_METRICAS_INVERTER = {
     "soc_tx_mortalidade",
     "soc_variacao_pop_2011_2021",
 }
 
-RANGES = {
+_RANGES = {
     "soc_pop_total_cim":           (1_000,   200_000),
     "soc_tx_natalidade":           (0,        30),
     "soc_tx_mortalidade":          (0,        30),
@@ -43,30 +35,15 @@ RANGES = {
     "soc_saldo_natural_acumulado": (-10_000,  10_000),
 }
 
-AVISOS: list[str] = []
-ERROS:  list[str] = []
-
-
-def aviso(msg: str) -> None:
-    print(f"  ⚠  {msg}")
-    AVISOS.append(msg)
-
-
-def erro(msg: str) -> None:
-    print(f"  ✗  {msg}")
-    ERROS.append(msg)
-
-
-def ok(msg: str) -> None:
-    print(f"  ✓  {msg}")
+_SCHEMA_ESPERADO = {
+    "codigo_ine", "nome", "ano", "metrica_codigo",
+    "valor", "valor_normalizado", "valor_texto", "categoria",
+}
 
 
 def check_schema(df: pd.DataFrame) -> None:
-    schema_esperado = {"codigo_ine", "nome", "ano", "metrica_codigo",
-                       "valor", "valor_normalizado", "valor_texto", "categoria"}
-    presentes = set(df.columns)
-    em_falta  = schema_esperado - presentes
-    extras    = presentes - schema_esperado
+    em_falta = _SCHEMA_ESPERADO - set(df.columns)
+    extras   = set(df.columns) - _SCHEMA_ESPERADO
     if em_falta:
         erro(f"Colunas em falta no schema: {sorted(em_falta)}")
     else:
@@ -75,29 +52,19 @@ def check_schema(df: pd.DataFrame) -> None:
         aviso(f"Coluna extra no schema: {col}")
 
 
-def check_cobertura(df: pd.DataFrame) -> None:
-    presentes = set(df["codigo_ine"].astype(str).unique())
-    ausentes  = set(MUNICIPIOS.keys()) - presentes
-    if ausentes:
-        nomes = [MUNICIPIOS[c] for c in sorted(ausentes)]
-        aviso(f"Municípios em falta → {nomes}")
-    else:
-        ok("Todos os 11 municípios presentes")
-
-
 def check_metricas(df: pd.DataFrame) -> None:
     presentes = set(df["metrica_codigo"].unique())
-    em_falta  = METRICAS_ESPERADAS - presentes
+    em_falta  = _METRICAS_ESPERADAS - presentes
     if em_falta:
         erro(f"Métricas esperadas em falta: {sorted(em_falta)}")
     else:
         ok("8 métricas esperadas presentes")
-    for m in sorted(presentes - METRICAS_ESPERADAS):
+    for m in sorted(presentes - _METRICAS_ESPERADAS):
         aviso(f"Métrica extra inesperada: {m}")
 
 
 def check_nulos(df: pd.DataFrame) -> dict:
-    result = {}
+    result: dict[str, float] = {}
     for metrica, grupo in df.groupby("metrica_codigo"):
         pct = grupo["valor"].isna().mean() * 100
         result[metrica] = round(pct, 1)
@@ -121,8 +88,8 @@ def check_nulos_ultimo_ano(df: pd.DataFrame) -> None:
         ok("Sem valores nulos no último ano de cada métrica")
 
 
-def check_outliers(df: pd.DataFrame) -> list:
-    suspeitos = []
+def check_outliers_soc(df: pd.DataFrame) -> list[str]:
+    suspeitos: list[str] = []
     for (metrica, ano), grupo in df.groupby(["metrica_codigo", "ano"]):
         vals = grupo["valor"].dropna()
         if len(vals) < 4:
@@ -139,18 +106,9 @@ def check_outliers(df: pd.DataFrame) -> list:
     return suspeitos
 
 
-def check_scores(df: pd.DataFrame) -> None:
-    df_num = df[df["valor_normalizado"].notna()]
-    fora   = df_num[(df_num["valor_normalizado"] < 0) | (df_num["valor_normalizado"] > 1)]
-    if not fora.empty:
-        erro(f"{len(fora)} scores fora de [0,1]")
-    else:
-        ok("Todos os scores normalizados em [0,1]")
-
-
 def check_ranges(df: pd.DataFrame) -> None:
     fora_total = 0
-    for met, (lo, hi) in RANGES.items():
+    for met, (lo, hi) in _RANGES.items():
         sub  = df[df["metrica_codigo"] == met]["valor"].dropna()
         fora = sub[(sub < lo) | (sub > hi)]
         if len(fora) > 0:
@@ -169,13 +127,13 @@ def check_duplicados(df: pd.DataFrame) -> None:
 
 
 def check_inversao(df: pd.DataFrame) -> None:
-    for met in METRICAS_INVERTER:
+    for met in _METRICAS_INVERTER:
         sub = df[(df["metrica_codigo"] == met) & df["valor_normalizado"].notna()]
         if sub.empty:
             continue
-        idx_max_val  = sub["valor"].idxmax()
-        score_pior   = sub.loc[idx_max_val, "valor_normalizado"]
-        mun_pior     = sub.loc[idx_max_val, "nome"]
+        idx_max_val = sub["valor"].idxmax()
+        score_pior  = sub.loc[idx_max_val, "valor_normalizado"]
+        mun_pior    = sub.loc[idx_max_val, "nome"]
         if score_pior > 0.1:
             erro(f"{met}: inversão incorrecta — {mun_pior} tem valor mais alto "
                  f"({sub.loc[idx_max_val,'valor']:.2f}) mas score={score_pior:.3f} (esperado ≈ 0)")
@@ -184,9 +142,9 @@ def check_inversao(df: pd.DataFrame) -> None:
 
 
 def check_desfasamento_anos(df: pd.DataFrame) -> None:
-    anos_max = df.groupby("metrica_codigo")["ano"].max()
-    ano_ref  = anos_max.max()
-    desfasadas = anos_max[anos_max < ano_ref - 1]
+    anos_max    = df.groupby("metrica_codigo")["ano"].max()
+    ano_ref     = anos_max.max()
+    desfasadas  = anos_max[anos_max < ano_ref - 1]
     if not desfasadas.empty:
         for met, ano in desfasadas.items():
             aviso(f"{met}: último ano={ano} vs referência={ano_ref} ({ano_ref - ano} anos de desfasamento)")
@@ -195,83 +153,56 @@ def check_desfasamento_anos(df: pd.DataFrame) -> None:
 
 
 def main() -> None:
+    resetar_log()
     print("\n=== VALIDATE · Cluster 6 — Sociedade ===\n")
 
     path = STAGING_DIR / "soc_transformed.parquet"
     if not path.exists():
-        erro("soc_transformed.parquet não encontrado — corre transform primeiro")
-        return
+        erro("soc_transformed.parquet não encontrado — corre transform primeiro"); return
 
     df = pd.read_parquet(path)
     print(f"  Carregados {len(df)} registos\n")
 
-    print("[ Schema ]")
-    check_schema(df)
-
-    print("\n[ Cobertura municipal ]")
-    check_cobertura(df)
-
-    print("\n[ Métricas ]")
-    check_metricas(df)
-
-    print("\n[ Nulos por métrica ]")
-    nulos = check_nulos(df)
-
-    print("\n[ Nulos no último ano ]")
-    check_nulos_ultimo_ano(df)
-
-    print("\n[ Outliers (Z-score > 3) ]")
-    outliers = check_outliers(df)
-
-    print("\n[ Scores normalizados ]")
-    check_scores(df)
-
-    print("\n[ Intervalos plausíveis ]")
-    check_ranges(df)
-
-    print("\n[ Duplicados ]")
-    check_duplicados(df)
-
-    print("\n[ Consistência de anos ]")
-    check_desfasamento_anos(df)
-
-    print("\n[ Inversão de métricas ]")
-    check_inversao(df)
+    print("[ Schema ]");              check_schema(df)
+    print("\n[ Cobertura municipal ]"); check_cobertura(df, "Sociedade")
+    print("\n[ Métricas ]");           check_metricas(df)
+    print("\n[ Nulos por métrica ]");  nulos = check_nulos(df)
+    print("\n[ Nulos no último ano ]"); check_nulos_ultimo_ano(df)
+    print("\n[ Outliers (Z-score > 3) ]"); outliers = check_outliers_soc(df)
+    print("\n[ Scores normalizados ]"); check_scores_normalizados(df, "Sociedade")
+    print("\n[ Intervalos plausíveis ]"); check_ranges(df)
+    print("\n[ Duplicados ]");          check_duplicados(df)
+    print("\n[ Consistência de anos ]"); check_desfasamento_anos(df)
+    print("\n[ Inversão de métricas ]"); check_inversao(df)
 
     print("\n[ Estatísticas por métrica ]")
-    stats = (
-        df.groupby("metrica_codigo")["valor"]
-        .agg(["count", "min", "max", "mean", "std"])
-        .round(3)
-    )
+    stats = df.groupby("metrica_codigo")["valor"].agg(["count", "min", "max", "mean", "std"]).round(3)
     print(stats.to_string())
 
+    report_path = STAGING_DIR / "soc_quality_report.json"
     report = {
         "timestamp":    datetime.now().isoformat(),
         "cluster":      "Sociedade",
         "total_rows":   len(df),
         "n_metricas":   int(df["metrica_codigo"].nunique()),
         "n_municipios": int(df["codigo_ine"].nunique()),
-        "avisos":       AVISOS,
-        "erros":        ERROS,
+        "avisos":       get_avisos(),
+        "erros":        get_erros(),
         "nulos_pct":    nulos,
         "outliers":     outliers,
         "stats":        stats.reset_index().to_dict(orient="records"),
     }
-
-    report_path = STAGING_DIR / "soc_quality_report.json"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
-    print(f"\n{'='*50}")
-    if ERROS:
-        print(f"  ✗ {len(ERROS)} erro(s) — corrigir antes do load")
+    report_path_str = report_path
+    if get_erros():
+        print(f"\n{'='*50}")
+        print(f"  ✗ {len(get_erros())} erro(s) — corrigir antes do load")
+        print(f"  Relatório: {report_path_str}")
         sys.exit(1)
-    elif AVISOS:
-        print(f"  ⚠ {len(AVISOS)} aviso(s) — pode prosseguir com cautela")
     else:
-        print("  ✓ Sem problemas — pronto para load")
-    print(f"  Relatório: data/staging/soc_quality_report.json")
+        imprimir_resumo_validacao(report_path_str)
 
 
 if __name__ == "__main__":

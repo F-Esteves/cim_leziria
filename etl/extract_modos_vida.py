@@ -1,74 +1,17 @@
+import re
 import pandas as pd
 import yaml
-import re
-import unicodedata
 from pathlib import Path
 
-CONFIG_PATH = Path("config/sources.yaml")
-STAGING_DIR = Path("data/staging")
-STAGING_DIR.mkdir(parents=True, exist_ok=True)
+from etl.utils import (
+    STAGING_DIR, MUNICIPIOS,
+    encontrar_codigo as extrair_cod_ine, safe_float,
+)
 
-with open(CONFIG_PATH, encoding="utf-8") as f:
+with open("config/sources.yaml", encoding="utf-8") as f:
     cfg = yaml.safe_load(f)
 
-RAW_DIR    = Path(cfg["raw_dir"])
-MUNICIPIOS = cfg["municipios"]   # {codigo_ine: nome}
-
-
-# ── Utilitários ────────────────────────────────────────────────
-
-def normalizar_texto(s: str) -> str:
-    if not isinstance(s, str):
-        return ""
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-    return re.sub(r"\s+", " ", s).strip().lower()
-
-
-NORM_TO_INE = {normalizar_texto(nome): cod for cod, nome in MUNICIPIOS.items()}
-ALIASES = {
-    "salvaterra de magos": "1415",
-    "santarém": "1416",
-    "azambuja": "1103",
-    "golega":   "1412",
-}
-NORM_TO_INE.update({normalizar_texto(k): v for k, v in ALIASES.items()})
-
-
-def extrair_cod_ine(valor_raw: str) -> str | None:
-    """Trata os 3 formatos de código encontrados nos ficheiros:
-       '1D31403: Almeirim' (INE), '1403:Almeirim' (INE Censos), nome puro (PORDATA)."""
-    raw = str(valor_raw).strip()
-    # INE formato 1D3: "1D31403: Almeirim"
-    m = re.search(r"1D3(\d{4})", raw)
-    if m:
-        cod = m.group(1)
-        return cod if cod in MUNICIPIOS else None
-    # INE Censos: "1403:Almeirim" ou "1403: Almeirim"
-    m = re.match(r"^(\d{4})\s*:", raw)
-    if m:
-        cod = m.group(1)
-        return cod if cod in MUNICIPIOS else None
-    # PORDATA: nome puro
-    norm = normalizar_texto(raw)
-    if norm in NORM_TO_INE:
-        return NORM_TO_INE[norm]
-    for chave, cod in NORM_TO_INE.items():
-        if chave and chave in norm:
-            return cod
-    return None
-
-
-def safe_float(v) -> float | None:
-    if v is None:
-        return None
-    s = str(v).strip().replace(",", ".").replace("\xa0", "").replace(" ", "")
-    if s in ("-", "…", "nan", ""):
-        return None
-    try:
-        return float(s)
-    except (ValueError, TypeError):
-        return None
+RAW_DIR = Path(cfg["raw_dir"])
 
 
 def ano_limpo(v) -> int | None:

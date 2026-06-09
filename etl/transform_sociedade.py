@@ -1,36 +1,17 @@
-from pathlib import Path
 import numpy as np
 import pandas as pd
-import yaml
 
-# ── Config ────────────────────────────────────────────────────────────────────
-CONFIG_PATH = Path("config/sources.yaml")
-STAGING_DIR = Path("data/staging")
-STAGING_DIR.mkdir(parents=True, exist_ok=True)
-
-with open(CONFIG_PATH, encoding="utf-8") as f:
-    cfg = yaml.safe_load(f)
-
-MUNICIPIOS = cfg["municipios"]
-
+from etl.utils import (
+    STAGING_DIR,
+    normalizar_scores, enforce_schema,
+)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-
-METRICAS_INVERTER = {
-    "soc_tx_mortalidade",       
-    "soc_variacao_pop_2011_2021",  
-                                   
+_METRICAS_INVERTER = {
+    "soc_tx_mortalidade",
+    "soc_variacao_pop_2011_2021",
 }
-
-
-
-def normalizar_minmax(series: pd.Series, inverter: bool = False) -> pd.Series:
-    mn, mx = series.min(), series.max()
-    if mx == mn:
-        return pd.Series(0.5, index=series.index)
-    norm = (series - mn) / (mx - mn)
-    return (1 - norm) if inverter else norm
 
 
 def registos_metrica(df_mun: pd.DataFrame, codigo: str, ano: int | None = None) -> pd.DataFrame:
@@ -225,22 +206,6 @@ def calc_saldo_acumulado(stg: dict) -> pd.DataFrame:
     ]
 
 
-# ── Normalização global ───────────────────────────────────────────────────────
-
-def normalizar_scores(df: pd.DataFrame) -> pd.DataFrame:
-    df["valor_normalizado"] = np.nan
-    for (metrica, ano), grupo in df.groupby(["metrica_codigo", "ano"]):
-        vals = grupo["valor"].dropna()
-        if len(vals) < 2:
-            df.loc[grupo.index, "valor_normalizado"] = 0.5
-            continue
-        inverter = metrica in METRICAS_INVERTER
-        df.loc[grupo.index, "valor_normalizado"] = normalizar_minmax(
-            df.loc[grupo.index, "valor"], inverter=inverter
-        ).round(4)
-    return df
-
-
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -269,23 +234,17 @@ def main():
 
     df_all = pd.concat(partes, ignore_index=True)
 
-    print("\n→ Normalizando métricas...")
-    df_all = normalizar_scores(df_all)
-
-    df_all["valor_texto"] = None
-    df_all["categoria"]   = None
-
-    
+    # Capturar o período de acumulação para diagnóstico antes de remover a coluna
     if "periodo_referencia" in df_all.columns:
         periodo = df_all[df_all["periodo_referencia"].notna()]["periodo_referencia"].iloc[0] \
                   if df_all["periodo_referencia"].notna().any() else "n/a"
         print(f"   Período saldo acumulado: {periodo}")
-        df_all = df_all.drop(columns=["periodo_referencia"])
 
-   
-    COLS_FINAL = ["codigo_ine", "nome", "ano", "metrica_codigo",
-                  "valor", "valor_normalizado", "valor_texto", "categoria"]
-    df_all = df_all[COLS_FINAL]
+    df_all = df_all.drop(columns=["periodo_referencia"], errors="ignore")
+
+    print("\n→ Normalizando métricas...")
+    df_all = normalizar_scores(df_all, metricas_inverter=_METRICAS_INVERTER)
+    df_all = enforce_schema(df_all)
 
     df_all.to_parquet(STAGING_DIR / "soc_transformed.parquet", index=False)
 

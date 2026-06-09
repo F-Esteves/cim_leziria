@@ -1,38 +1,17 @@
 import pandas as pd
 import yaml
-import re
 from pathlib import Path
 
-CONFIG_PATH = Path("config/sources.yaml")
-STAGING_DIR = Path("data/staging")
-STAGING_DIR.mkdir(parents=True, exist_ok=True)
+from etl.utils import (
+    STAGING_DIR,
+    encontrar_codigo as extrair_cod_ine,  
+    safe_float as safe_num,
+)
 
-with open(CONFIG_PATH, encoding="utf-8") as f:
+with open("config/sources.yaml", encoding="utf-8") as f:
     cfg = yaml.safe_load(f)
 
-RAW_DIR    = Path(cfg["raw_dir"])
-MUNICIPIOS = cfg["municipios"]   # {codigo_ine: nome}
-
-
-# ── Utilitários ────────────────────────────────────────────────
-
-def extrair_cod_ine(valor_raw: str) -> str | None:
-    """Extrai código INE de 4 dígitos de strings no formato '1D31403: Almeirim'."""
-    m = re.search(r"1D3(\d{4})", str(valor_raw))
-    if m:
-        cod = m.group(1)
-        return cod if cod in MUNICIPIOS else None
-    return None
-
-
-def safe_num(v) -> float | None:
-    """Converte para float; '-' e valores não numéricos devolvem None (→ 0 nos pontos)."""
-    if v is None or str(v).strip() in ("-", "nan", ""):
-        return None
-    try:
-        return float(str(v).replace(",", ".").replace("\xa0", "").replace(" ", ""))
-    except (ValueError, TypeError):
-        return None
+RAW_DIR = Path(cfg["raw_dir"])
 
 
 def ler_ine_wide(path: Path, skiprows: int) -> tuple[pd.DataFrame, list[str]]:

@@ -1,64 +1,20 @@
-import re
-import unicodedata
-from pathlib import Path
 import numpy as np
+import re
 import pandas as pd
 import yaml
+from pathlib import Path
+
+from etl.utils import (
+    STAGING_DIR, MUNICIPIOS,
+    encontrar_codigo, safe_float,
+)
 
 # ── Configuração ──────────────────────────────────────────────────────────────
-CONFIG_PATH = Path("config/sources.yaml")
-STAGING_DIR = Path("data/staging")
-STAGING_DIR.mkdir(parents=True, exist_ok=True)
-
-with open(CONFIG_PATH, encoding="utf-8") as f:
+with open("config/sources.yaml", encoding="utf-8") as f:
     cfg = yaml.safe_load(f)
 
-RAW_DIR    = Path(cfg["raw_dir"])
-MUNICIPIOS = cfg["municipios"]  # {codigo_ine: nome}
-
+RAW_DIR = Path(cfg["raw_dir"])
 LEZIRIA = list(MUNICIPIOS.keys())   # 11 códigos INE
-
-# ── Utilitários ───────────────────────────────────────────────────────────────
-
-def normalizar(s: str) -> str:
-    if not isinstance(s, str):
-        return ""
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-    return re.sub(r"\s+", " ", s).strip().lower()
-
-NORM_TO_INE = {normalizar(nome): cod for cod, nome in MUNICIPIOS.items()}
-ALIASES = {
-    "salvaterra de magos": "1415",
-    "santarém": "1416",
-    "azambuja": "1103",
-    "golega": "1412",
-}
-NORM_TO_INE.update(ALIASES)
-
-
-def encontrar_codigo(valor_raw: str) -> str | None:
-    raw = str(valor_raw).strip()
-    # Código embutido no nome INE, ex: "1406: Cartaxo"
-    m = re.match(r"(\d{4})\s*:", raw)
-    if m and m.group(1) in MUNICIPIOS:
-        return m.group(1)
-    if raw in MUNICIPIOS:
-        return raw
-    norm = normalizar(raw)
-    if norm in NORM_TO_INE:
-        return NORM_TO_INE[norm]
-    for chave, cod in NORM_TO_INE.items():
-        if chave and chave in norm:
-            return cod
-    return None
-
-
-def safe_float(v) -> float | None:
-    try:
-        return float(str(v).replace(",", ".").replace(" ", "").replace("\xa0", ""))
-    except Exception:
-        return None
 
 
 # ── Parser genérico INE wide (Total / Masculino / Feminino × anos) ────────────

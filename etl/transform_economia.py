@@ -1,15 +1,10 @@
 import pandas as pd
-import numpy as np
-from pathlib import Path
 
-STAGING_DIR = Path("data/staging")
-
-MUNICIPIOS = {
-    "1403": "Almeirim",   "1404": "Alpiarça",   "1103": "Azambuja",
-    "1405": "Benavente",  "1406": "Cartaxo",     "1407": "Chamusca",
-    "1409": "Coruche",    "1412": "Golegã",      "1414": "Rio Maior",
-    "1415": "Salvaterra de Magos",               "1416": "Santarém",
-}
+from etl.utils import (
+    STAGING_DIR, MUNICIPIOS,
+    safe_float as safe_num,
+    normalizar_scores, enforce_schema,
+)
 
 CAE_SECTOR = {
     "A": "agricultura",
@@ -20,26 +15,10 @@ CAE_SECTOR = {
     "L": "servicos", "M": "servicos", "N": "servicos",
 }
 
-def safe_num(v) -> float | None:
-    if v is None:
-        return None
-    try:
-        f = float(v)
-        return None if np.isnan(f) else f
-    except (TypeError, ValueError):
-        return None
-
-def normalizar(series: pd.Series, inverter: bool = False) -> pd.Series:
-    mn, mx = series.min(), series.max()
-    if mx == mn:
-        return pd.Series([0.5] * len(series), index=series.index)
-    norm = (series - mn) / (mx - mn)
-    return 1 - norm if inverter else norm
-
 
 # ── 5.1 Emprego e Estrutura ───────────────────────────────────────────────────
 
-def calcular_metricas_emprego(df_co: pd.DataFrame, df_cens_bruto: pd.DataFrame,
+def calcular_metricas_emprego(df_cens_bruto: pd.DataFrame,
                                pop_ativa: dict) -> pd.DataFrame:
     """
     Métricas:
@@ -247,8 +226,8 @@ def calcular_metricas_empresarialidade(df_nasc, df_mort, df_sobr,
                                         pop_total: dict) -> pd.DataFrame:
     """
     Métricas:
-      eco_taxa_natalidade_emp_pct       — nascidas / stock_empresas × 100
-      eco_taxa_mortalidade_emp_pct      — cessadas / stock_empresas × 100
+      eco_empresas_nascidas_n           — nascidas (valor absoluto)
+      eco_empresas_mortas_n             — mortas (valor absoluto)
       eco_taxa_sobrevivencia_1ano_pct   — sobrev_t / nascidas_(t-1) × 100
       eco_vn_per_capita_e               — VN_total / pop
 
@@ -262,37 +241,31 @@ def calcular_metricas_empresarialidade(df_nasc, df_mort, df_sobr,
     mort_idx = df_mort.set_index(["codigo_ine","ano"])["valor"]
     sobr_idx = df_sobr.set_index(["codigo_ine","ano"])["valor"]
 
+    # Anos com quebra de série — excluídos do cálculo
+    ANOS_EXCLUIR = {2013}
+
+    # Valores absolutos: nascidas e mortas por município e ano
+    # As taxas percentuais foram removidas — o stock total de empresas activas
+    # não está disponível nesta fonte (PORDATA), tornando o denominador incorrecto.
+    # Usam-se valores absolutos directamente comparáveis entre municípios.
     comuns = nasc_idx.index.intersection(mort_idx.index)
     for idx in comuns:
+        cod, ano = idx
+        if ano in ANOS_EXCLUIR:
+            continue
         n = safe_num(nasc_idx[idx])
         m = safe_num(mort_idx[idx])
         if n is None or m is None:
             continue
-        cod, ano = idx
-        s_prev = safe_num(sobr_idx.get((cod, ano - 1)))
-        if s_prev is None:
-            continue
-        denominador = s_prev + n + m
-        if denominador and denominador > 0:
-            rows.append({"codigo_ine": cod, "nome": MUNICIPIOS.get(cod, ""),
-                         "ano": int(ano), "metrica_codigo": "eco_taxa_natalidade_emp_pct",
-                         "valor": round(n / denominador * 100, 2),
-                         "flag_estimado": False})
-            rows.append({"codigo_ine": cod, "nome": MUNICIPIOS.get(cod, ""),
-                         "ano": int(ano), "metrica_codigo": "eco_taxa_mortalidade_emp_pct",
-                         "valor": round(m / denominador * 100, 2),
-                         "flag_estimado": False})
-
-    # Taxa de sobrevivência a 1 ano
-    for idx in sobr_idx.index:
-        cod, ano = idx
-        s = safe_num(sobr_idx[idx])
-        n_prev = safe_num(nasc_idx.get((cod, ano - 1)))
-        if s and n_prev and n_prev > 0:
-            rows.append({"codigo_ine": cod, "nome": MUNICIPIOS.get(cod,""),
-                         "ano": int(ano), "metrica_codigo": "eco_taxa_sobrevivencia_1ano_pct",
-                         "valor": round(s / n_prev * 100, 2),
-                         "flag_estimado": False})
+        rows.append({"codigo_ine": cod, "nome": MUNICIPIOS.get(cod, ""),
+                     "ano": int(ano), "metrica_codigo": "eco_empresas_nascidas_n",
+                     "valor": round(n, 0), "flag_estimado": False})
+        rows.append({"codigo_ine": cod, "nome": MUNICIPIOS.get(cod, ""),
+                     "ano": int(ano), "metrica_codigo": "eco_empresas_mortas_n",
+                     "valor": round(m, 0), "flag_estimado": False})
+        rows.append({"codigo_ine": cod, "nome": MUNICIPIOS.get(cod, ""),
+                     "ano": int(ano), "metrica_codigo": "eco_saldo_empresarial_n",
+                     "valor": round(n - m, 0), "flag_estimado": False})
 
     # VN per capita
     for _, r in df_vn_tot.iterrows():
@@ -310,27 +283,13 @@ def calcular_metricas_empresarialidade(df_nasc, df_mort, df_sobr,
 
 # ── Normalização ──────────────────────────────────────────────────────────────
 
-METRICAS_INVERTER = {
-    "eco_taxa_mortalidade_emp_pct",
+_METRICAS_INVERTER = {
+    "eco_empresas_mortas_n",  # mais mortas = pior dinamismo empresarial
     "eco_taxa_esforco_irs_pct",
 }
-METRICAS_SEM_NORMALIZACAO = {
-    "eco_proporcao_pc_pct",  
+_METRICAS_SEM_NORMALIZACAO = {
+    "eco_proporcao_pc_pct",
 }
-
-def normalizar_scores(df: pd.DataFrame) -> pd.DataFrame:
-    df["valor_normalizado"] = np.nan
-    for (metrica, ano), grupo in df.groupby(["metrica_codigo","ano"]):
-        if metrica in METRICAS_SEM_NORMALIZACAO:
-            continue
-        vals = grupo["valor"].dropna()
-        if len(vals) < 2:
-            df.loc[grupo.index, "valor_normalizado"] = 0.5
-            continue
-        inv = metrica in METRICAS_INVERTER
-        df.loc[grupo.index, "valor_normalizado"] = normalizar(
-            df.loc[grupo.index, "valor"], inverter=inv).values
-    return df
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -372,7 +331,12 @@ def main():
         df_nasc, df_mort, df_sobr, df_vn_tot, df_vn_sec, pop_total)
 
     df_all = pd.concat([metr_emp, metr_rend, metr_emp2], ignore_index=True)
-    df_all = normalizar_scores(df_all)
+    df_all = normalizar_scores(
+        df_all,
+        metricas_inverter=_METRICAS_INVERTER,
+        metricas_sem_normalizacao=_METRICAS_SEM_NORMALIZACAO,
+    )
+    df_all = enforce_schema(df_all)
 
     if "flag_estimado" in df_all.columns:
         df_all[df_all["flag_estimado"] == True][  # noqa: E712

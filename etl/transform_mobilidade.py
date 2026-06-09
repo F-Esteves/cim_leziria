@@ -1,62 +1,20 @@
 import pandas as pd
-import numpy as np
-from pathlib import Path
 
-STAGING_DIR = Path("data/staging")
+from etl.utils import (
+    STAGING_DIR,
+    row_base,
+    normalizar_scores, enforce_schema,
+)
 
-MUNICIPIOS = {
-    "1403": "Almeirim",        "1404": "Alpiarça",
-    "1103": "Azambuja",        "1405": "Benavente",
-    "1406": "Cartaxo",         "1407": "Chamusca",
-    "1409": "Coruche",         "1412": "Golegã",
-    "1414": "Rio Maior",       "1415": "Salvaterra de Magos",
-    "1416": "Santarém",
+_METRICAS_INVERTER = {
+    "mob_registo_total_1000hab",
 }
 
-
-METRICAS_INVERTER = {
-    "mob_registo_total_1000hab",    
+_METRICAS_SEM_NORMALIZACAO = {
+    "mob_evolucao_veiculos_pp",
+    "mob_crescimento_ve_pct",
 }
 
-
-METRICAS_SEM_NORMALIZACAO = {
-    "mob_evolucao_veiculos_pp",    
-    "mob_crescimento_ve_pct",       
-}
-
-
-def normalizar(series: pd.Series, inverter: bool = False) -> pd.Series:
-    mn, mx = series.min(), series.max()
-    if mx == mn:
-        return pd.Series([0.5] * len(series), index=series.index)
-    norm = (series - mn) / (mx - mn)
-    return 1 - norm if inverter else norm
-
-
-def normalizar_scores(df: pd.DataFrame) -> pd.DataFrame:
-    df["valor_normalizado"] = np.nan
-    for (metrica, ano), grupo in df.groupby(["metrica_codigo", "ano"]):
-        if metrica in METRICAS_SEM_NORMALIZACAO:
-            continue
-        vals = grupo["valor"].dropna()
-        if len(vals) < 2:
-            df.loc[grupo.index, "valor_normalizado"] = 0.5
-            continue
-        inv = metrica in METRICAS_INVERTER
-        df.loc[grupo.index, "valor_normalizado"] = normalizar(
-            df.loc[grupo.index, "valor"], inverter=inv
-        ).values
-    return df
-
-
-def row_base(codigo_ine, nome, ano, metrica, valor):
-    return {
-        "codigo_ine":     codigo_ine,
-        "nome":           nome,
-        "ano":            ano,
-        "metrica_codigo": metrica,
-        "valor":          valor,
-    }
 
 
 # ── 3.1 Veículos ───────────────────────────────────────────────
@@ -202,7 +160,12 @@ def main():
     df_pontos = transform_pontos_ve()
 
     df_all = pd.concat([df_veiculos, df_pontos], ignore_index=True)
-    df_all = normalizar_scores(df_all)
+    df_all = normalizar_scores(
+        df_all,
+        metricas_inverter=_METRICAS_INVERTER,
+        metricas_sem_normalizacao=_METRICAS_SEM_NORMALIZACAO,
+    )
+    df_all = enforce_schema(df_all)
 
     df_all["valor_texto"] = None
     df_all["categoria"]   = None

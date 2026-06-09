@@ -1,29 +1,12 @@
 import pandas as pd
-import numpy as np
-from pathlib import Path
 
-STAGING_DIR = Path("data/staging")
+from etl.utils import (
+    STAGING_DIR, MUNICIPIOS,
+    safe_float as safe_num,
+    normalizar_scores, enforce_schema,
+)
 
-MUNICIPIOS = {
-    "1403": "Almeirim",        "1404": "Alpiarça",
-    "1103": "Azambuja",        "1405": "Benavente",
-    "1406": "Cartaxo",         "1407": "Chamusca",
-    "1409": "Coruche",         "1412": "Golegã",
-    "1414": "Rio Maior",       "1415": "Salvaterra de Magos",
-    "1416": "Santarém",
-}
 N_MUN = len(MUNICIPIOS)
-
-
-# ── Normalização ───────────────────────────────────────────────
-
-def normalizar(series: pd.Series, inverter: bool = False) -> pd.Series:
-    """Min-max sobre os valores disponíveis. inverter=True → menor é melhor."""
-    mn, mx = series.min(), series.max()
-    if mx == mn:
-        return pd.Series([0.5] * len(series), index=series.index)
-    norm = (series - mn) / (mx - mn)
-    return 1 - norm if inverter else norm
 
 
 # ── Métricas de eleições ───────────────────────────────────────
@@ -59,16 +42,6 @@ def calcular_metricas_eleicoes(df: pd.DataFrame, sufixo: str) -> pd.DataFrame:
     return pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=["codigo_ine", "nome", "ano", "metrica_codigo", "valor"])
 
-
-def safe_num(v) -> float | None:
-    """Converte para float; devolve None se NaN/None/não-numérico."""
-    if v is None:
-        return None
-    try:
-        f = float(v)
-        return None if np.isnan(f) else f
-    except (TypeError, ValueError):
-        return None
 
 
 def calcular_evolucao_abstencao(df_ar: pd.DataFrame) -> pd.DataFrame:
@@ -204,39 +177,19 @@ def calcular_metricas_digital(df_bl, df_tel, df_tv, pop_total: dict) -> pd.DataF
 
     return df
 
-
 # ── Normalização final ─────────────────────────────────────────
 
-METRICAS_INVERTER = {
+_METRICAS_INVERTER = {
     "gov_abstencao_ar_pct",
     "gov_abstencao_aut_pct",
     "gov_abstencao_pres_pct",
     "gov_evolucao_abstencao_pp",
 }
 
-
-METRICAS_SEM_NORMALIZACAO = {
+_METRICAS_SEM_NORMALIZACAO = {
     "gov_partido_vencedor_cm",
-    "gov_tv_assinantes_abs",   
+    "gov_tv_assinantes_abs",
 }
-
-
-def normalizar_scores(df: pd.DataFrame) -> pd.DataFrame:
-    df["valor_normalizado"] = np.nan
-
-    for (metrica, ano), grupo in df.groupby(["metrica_codigo", "ano"]):
-        if metrica in METRICAS_SEM_NORMALIZACAO:
-            continue
-        vals = grupo["valor"].dropna()
-        if len(vals) < 2:
-            df.loc[grupo.index, "valor_normalizado"] = 0.5
-            continue
-        inv = metrica in METRICAS_INVERTER
-        df.loc[grupo.index, "valor_normalizado"] = normalizar(
-            df.loc[grupo.index, "valor"], inverter=inv
-        ).values
-
-    return df
 
 
 # ── Main ───────────────────────────────────────────────────────
@@ -289,7 +242,12 @@ def main():
             resultados[col] = None
 
     df_all = pd.concat([df_numericas, resultados], ignore_index=True)
-    df_all = normalizar_scores(df_all)
+    df_all = normalizar_scores(
+        df_all,
+        metricas_inverter=_METRICAS_INVERTER,
+        metricas_sem_normalizacao=_METRICAS_SEM_NORMALIZACAO,
+    )
+    df_all = enforce_schema(df_all)
 
     df_all.to_parquet(STAGING_DIR / "gov_transformed.parquet", index=False)
 

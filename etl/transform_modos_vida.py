@@ -1,26 +1,13 @@
-"""
-transform_modos_vida.py
-CIM Lezíria do Tejo · Cluster 4 — Modos de Vida
-Calcula métricas de saúde, segurança, educação, turismo e habitação.
-"""
-
 import pandas as pd
-import numpy as np
-from pathlib import Path
 
-STAGING_DIR = Path("data/staging")
-
-MUNICIPIOS = {
-    "1403": "Almeirim",        "1404": "Alpiarça",
-    "1103": "Azambuja",        "1405": "Benavente",
-    "1406": "Cartaxo",         "1407": "Chamusca",
-    "1409": "Coruche",         "1412": "Golegã",
-    "1414": "Rio Maior",       "1415": "Salvaterra de Magos",
-    "1416": "Santarém",
-}
+from etl.utils import (
+    STAGING_DIR,
+    row_base,
+    normalizar_scores, enforce_schema,
+)
 
 # Métricas onde menor = melhor
-METRICAS_INVERTER = {
+_METRICAS_INVERTER = {
     "mdv_hab_medico",
     "mdv_hab_farmaceutico",
     "mdv_acidentes_vitimas_1000hab",
@@ -34,7 +21,7 @@ METRICAS_INVERTER = {
 }
 
 # Métricas sem normalização (valores CIM-level, não por município)
-METRICAS_SEM_NORMALIZACAO = {
+_METRICAS_SEM_NORMALIZACAO = {
     "mdv_utentes_csp",
     "mdv_consultas_presenciais",
     "mdv_consultas_total",
@@ -42,37 +29,9 @@ METRICAS_SEM_NORMALIZACAO = {
     "mdv_alojamentos_familares",
     "mdv_alojamentos_uso_sazonal",
     "mdv_alojamentos_vagos",
-    "mdv_ensino_superior_n",       #
+    "mdv_ensino_superior_n",
 }
 
-
-def normalizar(series: pd.Series, inverter: bool = False) -> pd.Series:
-    mn, mx = series.min(), series.max()
-    if mx == mn:
-        return pd.Series([0.5] * len(series), index=series.index)
-    norm = (series - mn) / (mx - mn)
-    return 1 - norm if inverter else norm
-
-
-def normalizar_scores(df: pd.DataFrame) -> pd.DataFrame:
-    df["valor_normalizado"] = np.nan
-    for (metrica, ano), grupo in df.groupby(["metrica_codigo", "ano"]):
-        if metrica in METRICAS_SEM_NORMALIZACAO:
-            continue
-        vals = grupo["valor"].dropna()
-        if len(vals) < 2:
-            df.loc[grupo.index, "valor_normalizado"] = 0.5
-            continue
-        inv = metrica in METRICAS_INVERTER
-        df.loc[grupo.index, "valor_normalizado"] = normalizar(
-            df.loc[grupo.index, "valor"], inverter=inv
-        ).values
-    return df
-
-
-def row_base(cod, nome, ano, metrica, valor):
-    return {"codigo_ine": cod, "nome": nome, "ano": ano,
-            "metrica_codigo": metrica, "valor": valor}
 
 
 # ── 4.1 Saúde ─────────────────────────────────────────────────
@@ -304,7 +263,12 @@ def main():
     df_hab = transform_habitacao()
 
     df_all = pd.concat([df_saude, df_seg, df_educ, df_tur, df_hab], ignore_index=True)
-    df_all = normalizar_scores(df_all)
+    df_all = normalizar_scores(
+        df_all,
+        metricas_inverter=_METRICAS_INVERTER,
+        metricas_sem_normalizacao=_METRICAS_SEM_NORMALIZACAO,
+    )
+    df_all = enforce_schema(df_all)
     df_all.to_parquet(STAGING_DIR / "mdv_transformed.parquet", index=False)
 
     print(f"\n✓ Transform concluído")

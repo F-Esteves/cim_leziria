@@ -1,59 +1,17 @@
+import re
 import pandas as pd
 import yaml
-import re
-import unicodedata
 from pathlib import Path
 
-CONFIG_PATH = Path("config/sources.yaml")
-STAGING_DIR = Path("data/staging")
-STAGING_DIR.mkdir(parents=True, exist_ok=True)
+from etl.utils import (
+    STAGING_DIR, MUNICIPIOS,
+    encontrar_codigo, safe_float,
+)
 
-with open(CONFIG_PATH, encoding="utf-8") as f:
+with open("config/sources.yaml", encoding="utf-8") as f:
     cfg = yaml.safe_load(f)
 
-RAW_DIR    = Path(cfg["raw_dir"])
-MUNICIPIOS = cfg["municipios"]   # {codigo_ine: nome}
-
-# ── Utilitários ────────────────────────────────────────────────────────────────
-
-def normalizar_texto(s: str) -> str:
-    if not isinstance(s, str):
-        return ""
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-    return re.sub(r"\s+", " ", s).strip().lower()
-
-NORM_TO_INE = {normalizar_texto(nome): cod for cod, nome in MUNICIPIOS.items()}
-ALIASES = {
-    "salvaterra de magos": "1415",
-    "santarém": "1416",
-    "azambuja": "1103", 
-    "golega": "1412",
-}
-NORM_TO_INE.update({normalizar_texto(k): v for k, v in ALIASES.items()})
-
-def encontrar_codigo(valor_raw: str) -> str | None:
-    raw = str(valor_raw).strip()
-    m = re.search(r"1D3(\d{4})", raw)
-    if m:
-        cod = m.group(1)
-        if cod in MUNICIPIOS:
-            return cod
-    if raw.isdigit() and raw in MUNICIPIOS:
-        return raw
-    norm = normalizar_texto(raw)
-    if norm in NORM_TO_INE:
-        return NORM_TO_INE[norm]
-    for chave, cod in NORM_TO_INE.items():
-        if chave and chave in norm:
-            return cod
-    return None
-
-def safe_float(v) -> float | None:
-    try:
-        return float(str(v).replace(",", ".").replace(" ", "").replace("\xa0", ""))
-    except Exception:
-        return None
+RAW_DIR = Path(cfg["raw_dir"])
 
 def ler_ine_pares_anos(path: Path, anos: list[int]) -> pd.DataFrame:
     """INE: col0=geo, cols ímpares (1,3,5...) = valores por ano."""
