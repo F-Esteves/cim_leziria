@@ -419,3 +419,17 @@ sociedade:
     col_area_m2: "Área (m2)"
     col_pop: "População"
     unidade_area: "m2"
+# Dados geográficos dos municípios (área em km²)
+# Fonte: INE / CAOP
+municipios_geo:
+  "1403": {nome: "Almeirim",            area_km2: 232.2}
+  "1404": {nome: "Alpiarça",             area_km2:  94.0}
+  "1103": {nome: "Azambuja",            area_km2: 261.9}
+  "1405": {nome: "Benavente",           area_km2: 522.3}
+  "1406": {nome: "Cartaxo",             area_km2: 158.2}
+  "1407": {nome: "Chamusca",            area_km2: 776.9}
+  "1409": {nome: "Coruche",             area_km2: 1145.0}
+  "1412": {nome: "Golegã",              area_km2:  85.4}
+  "1414": {nome: "Rio Maior",           area_km2: 270.7}
+  "1415": {nome: "Salvaterra de Magos", area_km2: 244.0}
+  "1416": {nome: "Santarém",            area_km2: 558.6}
