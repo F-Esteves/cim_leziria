@@ -154,10 +154,21 @@ def transform_educacao() -> pd.DataFrame:
                                  "mdv_sem_escolaridade_pct", round(float(r["valor"]), 2)))
 
     df_sup = pd.read_parquet(STAGING_DIR / "mdv_ensino_superior.parquet")
+    soc_path = STAGING_DIR / "soc_censos_2021.parquet"
+    pop_total = pd.read_parquet(soc_path).set_index("codigo_ine")["valor"].to_dict() \
+                if soc_path.exists() else {}
+
     for _, r in df_sup.iterrows():
         if pd.notna(r["valor"]):
-            rows.append(row_base(r["codigo_ine"], r["nome"], int(r["ano"]),
-                                 "mdv_ensino_superior_n", round(float(r["valor"]), 0)))
+            cod  = r["codigo_ine"]
+            nome = r["nome"]
+            ano  = int(r["ano"])
+            n    = float(r["valor"])
+            rows.append(row_base(cod, nome, ano, "mdv_ensino_superior_n", round(n, 0)))
+            pop = pop_total.get(cod)
+            if pop and pop > 0:
+                rows.append(row_base(cod, nome, ano, "mdv_ensino_superior_pct",
+                                     round(n / pop * 100, 2)))
 
     df_metr = pd.DataFrame(rows)
     print(f"     Educação: {len(df_metr)} registos · {df_metr['metrica_codigo'].nunique()} métricas")
