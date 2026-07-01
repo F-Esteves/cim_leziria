@@ -175,30 +175,36 @@ def calc_variacao_pop(stg: dict) -> pd.DataFrame:
 
 
 def calc_saldo_acumulado(stg: dict) -> pd.DataFrame:
+    ANO_INI = 2019
+    ANO_FIM = 2024
+ 
     nv = stg["nados_vivos"]
     ob = stg["obitos"]
-
+ 
     merged = nv.merge(
         ob[["codigo_ine", "ano", "valor"]].rename(columns={"valor": "obitos"}),
         on=["codigo_ine", "ano"], how="inner"
     ).rename(columns={"valor": "nados_vivos"})
-
+ 
+    # Filtrar para o período de monitorização (pré-COVID até ao presente)
+    merged = merged[(merged["ano"] >= ANO_INI) & (merged["ano"] <= ANO_FIM)]
+ 
     merged["saldo"] = merged["nados_vivos"] - merged["obitos"]
     acum = (merged
             .groupby(["codigo_ine", "municipio"])["saldo"]
             .sum()
             .reset_index()
             .rename(columns={"saldo": "valor"}))
-
+ 
     ano_min = int(merged["ano"].min())
     ano_max = int(merged["ano"].max())
-
+ 
     acum["metrica_codigo"]    = "soc_saldo_natural_acumulado"
     acum["ano"]               = ano_max
     acum["valor"]             = acum["valor"].round(0)
     acum["valor_normalizado"] = None
     acum["periodo_referencia"] = f"{ano_min}-{ano_max}"
-
+ 
     print(f"     Período de acumulação: {ano_min}–{ano_max}")
     return acum.rename(columns={"municipio": "nome"})[
         ["codigo_ine", "nome", "metrica_codigo", "ano",
