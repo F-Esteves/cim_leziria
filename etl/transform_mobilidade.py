@@ -4,6 +4,7 @@ from etl.utils import (
     STAGING_DIR,
     row_base,
     normalizar_scores, enforce_schema,
+    carregar_populacao_referencia,
 )
 
 _METRICAS_INVERTER = {
@@ -68,11 +69,8 @@ def transform_pontos_ve() -> pd.DataFrame:
     df_ac = pd.read_parquet(STAGING_DIR / "mob_pontos_acesso.parquet")
     df_tp = pd.read_parquet(STAGING_DIR / "mob_pontos_tipo.parquet")
 
-    soc_path = STAGING_DIR / "soc_censos_2021.parquet"
-    if soc_path.exists():
-        pop_total = pd.read_parquet(soc_path).set_index("codigo_ine")["valor"].to_dict()
-    else:
-        pop_total = {}
+    pop_total = carregar_populacao_referencia()
+    if not pop_total:
         print("     ⚠  soc_censos_2021.parquet não encontrado — mob_ve_por_1000hab não será calculado")
 
     rows = []

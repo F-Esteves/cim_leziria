@@ -23,6 +23,10 @@ MUNICIPIOS: dict[str, str] = _cfg["municipios"]
 # Dados geográficos (área) — secção municipios_geo do sources.yaml
 _GEO: dict = _cfg.get("municipios_geo", {})
 
+PT_CODIGO: str = "PT"
+PT_NOME:   str = "Portugal"
+ANO_REFERENCIA_POPULACAO: int = 2025
+
 # ── Ligação à base de dados ────────────────────────────────────────────────────
 
 def conectar() -> psycopg2.extensions.connection:
@@ -51,22 +55,25 @@ def seed_dim_municipio(conn) -> int:
     for codigo, nome in MUNICIPIOS.items():
         geo      = _GEO.get(codigo, {})
         area     = geo.get("area_km2")
-        rows.append((codigo, nome, area))
+        rows.append((codigo, nome, area, "concelho"))
+    rows.append((PT_CODIGO, PT_NOME, None, "nacional"))
 
     with conn.cursor() as cur:
         psycopg2.extras.execute_values(
             cur,
             """
-            INSERT INTO dim_municipio (codigo_ine, nome, area_km2)
+            INSERT INTO dim_municipio (codigo_ine, nome, area_km2, tipo)
             VALUES %s
             ON CONFLICT (codigo_ine) DO UPDATE
                 SET nome     = EXCLUDED.nome,
-                    area_km2 = EXCLUDED.area_km2
+                    area_km2 = EXCLUDED.area_km2,
+                    tipo     = EXCLUDED.tipo
             """,
             rows,
         )
     conn.commit()
-    print(f"  ✓ dim_municipio: {len(rows)} municípios carregados de sources.yaml")
+    print(f"  ✓ dim_municipio: {len(rows)} entidades carregadas "
+          f"({len(rows) - 1} concelhos + Portugal)")
     return len(rows)
 
 
@@ -199,6 +206,55 @@ def load_indicadores_bulk(
         conn.commit()
 
     return len(rows), ignorados
+
+
+# ── População residente — denominador partilhado por todos os clusters ────────
+
+def carregar_populacao_referencia(
+    ano: int | None = None, *, incluir_pt: bool = False
+) -> dict[str, float]:
+    path = STAGING_DIR / "soc_censos_2021.parquet"
+    if not path.exists():
+        return {}
+
+    df = pd.read_parquet(path)
+    if not incluir_pt:
+        df = df[df["codigo_ine"] != PT_CODIGO]
+
+    df_cim  = df[df["codigo_ine"] != PT_CODIGO]
+    ano_ref = ano or ANO_REFERENCIA_POPULACAO
+
+    sub = df[df["ano"] == ano_ref]
+    if sub.empty and not df_cim.empty:
+        ano_ref = int(df_cim["ano"].max())
+        sub = df[df["ano"] == ano_ref]
+
+    return sub.set_index("codigo_ine")["valor"].to_dict()
+
+
+def filtrar_populacao_cim(df_pop: pd.DataFrame, ano: int | None = None) -> pd.DataFrame:
+    df_cim  = df_pop[df_pop["codigo_ine"] != PT_CODIGO]
+    ano_ref = ano or ANO_REFERENCIA_POPULACAO
+
+    sub = df_cim[df_cim["ano"] == ano_ref]
+    if sub.empty and not df_cim.empty:
+        ano_ref = int(df_cim["ano"].max())
+        sub = df_cim[df_cim["ano"] == ano_ref]
+
+    return sub
+
+
+def carregar_populacao_serie(*, incluir_pt: bool = False) -> dict[tuple[str, int], float]:
+    path = STAGING_DIR / "soc_censos_2021.parquet"
+    if not path.exists():
+        return {}
+    df = pd.read_parquet(path)
+    if not incluir_pt:
+        df = df[df["codigo_ine"] != PT_CODIGO]
+    return {
+        (row["codigo_ine"], int(row["ano"])): row["valor"]
+        for _, row in df.iterrows()
+    }
 
 
 # ── Cálculo de scores via SQL ──────────────────────────────────────────────────
@@ -564,16 +620,25 @@ def normalizar_scores(
     ----------
     metricas_inverter          — métricas onde o menor valor é melhor (score invertido)
     metricas_sem_normalizacao  — métricas textuais ou categóricas a saltar
+
+    Portugal ('PT') é excluído do cálculo do min-max: é um valor de
+    referência nacional, não um concorrente na escala dos 11 municípios da
+    CIM. Se entrasse no min-max, distorcia o score de todos os concelhos
+    sempre que o valor nacional fosse o mais alto/baixo do grupo. A linha de
+    Portugal fica sempre com valor_normalizado = None (não tem "score" CIM).
     """
     inv  = metricas_inverter         or set()
     skip = metricas_sem_normalizacao or set()
 
     df["valor_normalizado"] = np.nan
 
-    for (metrica, ano), grupo in df.groupby(["metrica_codigo", "ano"]):
+    is_pt = df["codigo_ine"] == PT_CODIGO if "codigo_ine" in df.columns else pd.Series(False, index=df.index)
+
+    for (metrica, ano), grupo_completo in df.groupby(["metrica_codigo", "ano"]):
         if metrica in skip:
             continue
-        vals = grupo["valor"].dropna()
+        grupo = grupo_completo[~is_pt.loc[grupo_completo.index]]
+        vals  = grupo["valor"].dropna()
         if len(vals) < 2:
             df.loc[grupo.index, "valor_normalizado"] = 0.5
             continue

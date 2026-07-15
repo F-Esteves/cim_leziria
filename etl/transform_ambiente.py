@@ -1,8 +1,9 @@
 import pandas as pd
 
 from etl.utils import (
-    STAGING_DIR,
+    STAGING_DIR, PT_CODIGO,
     row_base, normalizar_scores, enforce_schema,
+    carregar_populacao_serie,
 )
 
 # Métricas onde menor = melhor (para normalização invertida)
@@ -171,12 +172,11 @@ def transform_residuos() -> pd.DataFrame:
     print("  → Transformando resíduos APA")
     df = pd.read_parquet(STAGING_DIR / "amb_residuos.parquet")
 
-    # Pop Censos 2021 — para cálculo per capita (Cluster 6 — Sociedade)
-    soc_path = STAGING_DIR / "soc_censos_2021.parquet"
-    if soc_path.exists():
-        pop_total = pd.read_parquet(soc_path).set_index("codigo_ine")["valor"].to_dict()
-    else:
-        pop_total = {}
+    # Série completa (município + Portugal) casada por ano — os resíduos são
+    # multi-ano (2021-2024) e a população também, por isso o per capita usa
+    # sempre a população do MESMO ano, nunca um ano de referência fixo.
+    pop_serie = carregar_populacao_serie(incluir_pt=True)
+    if not pop_serie:
         print("     ⚠  soc_censos_2021.parquet não encontrado — amb_residuos_per_capita não será calculado")
 
     rows = []
@@ -197,8 +197,8 @@ def transform_residuos() -> pd.DataFrame:
         if total and total > 0:
             rows.append(row_base(cod, nome, ano, "amb_residuos_total_ton", round(total, 1)))
 
-            # Per capita: toneladas × 1000 / pop = kg/hab
-            pop = pop_total.get(cod)
+            # Per capita: toneladas × 1000 / pop = kg/hab (Portugal incluído)
+            pop = pop_serie.get((cod, ano))
             if pop and pop > 0:
                 rows.append(row_base(cod, nome, ano, "amb_residuos_per_capita_kg_hab",
                                      round(total * 1000 / pop, 2)))

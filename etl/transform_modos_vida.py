@@ -4,6 +4,7 @@ from etl.utils import (
     STAGING_DIR,
     row_base,
     normalizar_scores, enforce_schema,
+    carregar_populacao_referencia,
 )
 
 # Métricas onde menor = melhor
@@ -55,9 +56,7 @@ def transform_saude() -> pd.DataFrame:
 
     # Utentes CSP e % com MdF — nível ULS Lezíria
     df = pd.read_parquet(STAGING_DIR / "mdv_utentes_csp.parquet")
-    soc_path = STAGING_DIR / "soc_censos_2021.parquet"
-    pop_total = pd.read_parquet(soc_path).set_index("codigo_ine")["valor"].to_dict() \
-                if soc_path.exists() else {}
+    pop_total = carregar_populacao_referencia()
 
     for _, r in df.iterrows():
         if pd.notna(r["valor"]):
@@ -154,9 +153,7 @@ def transform_educacao() -> pd.DataFrame:
                                  "mdv_sem_escolaridade_pct", round(float(r["valor"]), 2)))
 
     df_sup = pd.read_parquet(STAGING_DIR / "mdv_ensino_superior.parquet")
-    soc_path = STAGING_DIR / "soc_censos_2021.parquet"
-    pop_total = pd.read_parquet(soc_path).set_index("codigo_ine")["valor"].to_dict() \
-                if soc_path.exists() else {}
+    pop_total = carregar_populacao_referencia()
 
     for _, r in df_sup.iterrows():
         if pd.notna(r["valor"]):
@@ -171,6 +168,28 @@ def transform_educacao() -> pd.DataFrame:
                                      round(n / pop * 100, 2)))
 
     df_metr = pd.DataFrame(rows)
+
+    # Novas fontes — pass-through directo (já vêm prontas da extração,
+    # incluindo Portugal). Cada parquet já tem uma coluna "metrica" com o
+    # nome final (sem prefixo "mdv_" — adicionado aqui, por convenção).
+    novos_parquets = [
+        "mdv_ensino_superior_inscritos",
+        "mdv_ensino_nao_superior",
+        "mdv_ensino_secundario_orientado",
+        "mdv_tx_retencao_desistencia",
+        "mdv_tx_transicao_conclusao",
+    ]
+    extra_rows = []
+    for nome_parquet in novos_parquets:
+        df_novo = pd.read_parquet(STAGING_DIR / f"{nome_parquet}.parquet")
+        for _, r in df_novo.iterrows():
+            if pd.notna(r["valor"]):
+                extra_rows.append(row_base(
+                    r["codigo_ine"], r["nome"], int(r["ano"]),
+                    f"mdv_{r['metrica']}", round(float(r["valor"]), 2),
+                ))
+
+    df_metr = pd.concat([df_metr, pd.DataFrame(extra_rows)], ignore_index=True)
     print(f"     Educação: {len(df_metr)} registos · {df_metr['metrica_codigo'].nunique()} métricas")
     return df_metr
 
@@ -202,6 +221,12 @@ def transform_turismo() -> pd.DataFrame:
                 rows.append(row_base(cod, nome, int(ano_fim),
                                      "mdv_evolucao_dormidas_pp",
                                      round((v_fim - v_ini) / n, 4)))
+
+    df_aloj_tipo = pd.read_parquet(STAGING_DIR / "mdv_alojamentos_tipo.parquet")
+    for _, r in df_aloj_tipo.iterrows():
+        if pd.notna(r["valor"]):
+            rows.append(row_base(r["codigo_ine"], r["nome"], int(r["ano"]),
+                                 f"mdv_{r['metrica']}", round(float(r["valor"]), 0)))
 
     df_metr = pd.DataFrame(rows)
     print(f"     Turismo: {len(df_metr)} registos · {df_metr['metrica_codigo'].nunique()} métricas")

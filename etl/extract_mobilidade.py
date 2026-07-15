@@ -3,7 +3,7 @@ import yaml
 from pathlib import Path
 
 from etl.utils import (
-    STAGING_DIR,
+    STAGING_DIR, MUNICIPIOS,
     encontrar_codigo as extrair_cod_ine,  
     safe_float as safe_num,
 )
@@ -41,42 +41,55 @@ def ler_ine_wide(path: Path, skiprows: int) -> tuple[pd.DataFrame, list[str]]:
 # ── 3.1 Veículos ───────────────────────────────────────────────
 
 def extrair_veiculos() -> pd.DataFrame:
-    cfg_v    = cfg["mobilidade"]["veiculos"]
-    path     = RAW_DIR / cfg_v["ficheiro"]
-    anos     = sorted(cfg_v["anos"], reverse=True)   # INE: 2024→2021
-    n_tipos  = cfg_v["n_tipos"]                       # 4
-
+    cfg_v  = cfg["mobilidade"]["veiculos"]
+    path   = RAW_DIR / cfg_v["ficheiro"]
+    anos   = cfg_v["anos"]   # já em ordem [2025, 2024, 2023, 2022, 2021]
+    engine = "xlrd" if str(path).endswith(".xls") else None
     print(f"  → Lendo {path.name}")
-    df_filt, data_cols, col_mun = ler_ine_wide(path, cfg_v["skiprows"])
 
-    if df_filt.empty:
-        print("  ⚠ Nenhum município encontrado")
-        return pd.DataFrame()
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
 
-    # Esperamos len(anos) × n_tipos colunas de dados
-    esperadas = len(anos) * n_tipos
-    if len(data_cols) < esperadas:
-        print(f"  ⚠ {len(data_cols)} colunas numéricas (esperadas {esperadas})")
+    n_cat      = 3   # Ligeiros, Pesados, Tratores agrícolas
+    bloco_cols = n_cat * 2
 
-    tipos = ["total", "ligeiros", "pesados", "tratores"]
-    rows  = []
+    rows = []
+    for _, row in df_raw.iterrows():
+        nome_raw = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        cod_raw  = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        if not nome_raw or not cod_raw:
+            continue
 
-    for i, ano in enumerate(anos):
-        base = i * n_tipos
-        for j, tipo in enumerate(tipos):
-            col_idx = base + j
-            if col_idx >= len(data_cols):
-                break
-            col = data_cols[col_idx]
-            for _, row in df_filt.iterrows():
-                v = safe_num(row[col])
-                if v is not None:
+        codigo = extrair_cod_ine(cod_raw)
+        if codigo not in MUNICIPIOS:
+            continue
+        nome = MUNICIPIOS[codigo]
+
+        for i, ano in enumerate(anos):
+            base = 2 + i * bloco_cols
+            try:
+                ligeiros = safe_num(row.iloc[base])
+                pesados  = safe_num(row.iloc[base + 2])
+                tratores = safe_num(row.iloc[base + 4])
+            except IndexError:
+                continue
+            if all(v is None for v in (ligeiros, pesados, tratores)):
+                continue
+
+            total = sum(v or 0 for v in (ligeiros, pesados, tratores))
+            for tipo, valor in [
+                ("total",    round(total, 4)),
+                ("ligeiros", ligeiros),
+                ("pesados",  pesados),
+                ("tratores", tratores),
+            ]:
+                if valor is not None:
                     rows.append({
-                        "codigo_ine": row["codigo_ine"],
-                        "nome":       row[col_mun],
+                        "codigo_ine": codigo,
+                        "nome":       nome,
                         "ano":        ano,
                         "tipo":       tipo,
-                        "valor":      v,
+                        "valor":      valor,
                     })
 
     df = pd.DataFrame(rows)

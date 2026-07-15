@@ -66,9 +66,13 @@ def extrair_emprego_conta_outrem() -> pd.DataFrame:
     df_raw = pd.read_excel(path, sheet_name=0, skiprows=0, header=None)
 
     # Identificar linha de dados (col[0] contém "1D3")
+    # NOTA: usa-se str(v) em cada elemento, não .astype(str) em bloco —
+    # no pandas 2.x/3.x com dtype "string" (StringDtype), astype(str)
+    # pode preservar NaN como float em vez de o converter à string "nan",
+    # o que faz o re.search() seguinte rebentar com TypeError.
     data_start = next(
-        (i for i, v in enumerate(df_raw.iloc[:, 0].astype(str))
-         if re.search(r"1D3\d{4}", v)), None
+        (i for i, v in enumerate(df_raw.iloc[:, 0])
+         if re.search(r"1D3\d{4}", str(v))), None
     )
     if data_start is None:
         print("  ⚠ Nenhuma linha de dados encontrada")
@@ -242,61 +246,68 @@ def extrair_demografica_empresas() -> dict[str, pd.DataFrame]:
 
 def extrair_volume_negocios() -> dict[str, pd.DataFrame]:
     cfg_vn = cfg["economia"]["empresarialidade"]["volume_negocios"]
-    path = RAW_DIR / cfg_vn["ficheiro"]
-    anos = cfg_vn["anos"]
+    path   = RAW_DIR / cfg_vn["ficheiro"]
+    anos   = cfg_vn["anos"]   # [2024, 2023, 2022]
+    engine = "xlrd" if str(path).endswith(".xls") else None
     print(f" → {path.name}")
 
-    df_raw = pd.read_excel(path, sheet_name=0, skiprows=0, header=None)
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
 
-    rows_sect = []
+    # Offsets dentro de cada bloco de ano (posição 0 = Total)
+    OFF_TOTAL       = 0
+    OFF_AGRICULTURA = 2                 # secção A
+    OFF_INDUSTRIA   = [4, 6, 8, 10, 12]  # secções B, C, D, E, F
+    N_CATEGORIAS    = 18
+    BLOCO_COLS      = N_CATEGORIAS * 2
+
+    rows_tot, rows_sect = [], []
+
     for _, row in df_raw.iterrows():
-        cod = encontrar_codigo(row.iloc[0])
-        if cod is None:
+        nome_raw = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        cod_raw  = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        if not nome_raw or not cod_raw:
             continue
 
-        cae_raw = str(row.iloc[1]).strip().upper() if pd.notna(row.iloc[1]) else ""
-        if cae_raw in ("", "NAN", "TOTAL", "T"):
-            continue
-
-        nome = MUNICIPIOS[cod]
+        if cod_raw == "PT" or nome_raw == "Portugal":
+            codigo, nome = "PT", "Portugal"
+        else:
+            codigo = encontrar_codigo(cod_raw)
+            if codigo not in MUNICIPIOS:
+                continue
+            nome = MUNICIPIOS[codigo]
 
         for i, ano in enumerate(anos):
-            col_idx = 2 + 2 * i
-            if col_idx >= len(row):
+            base = 2 + i * BLOCO_COLS
+
+            total = safe_float(row.iloc[base + OFF_TOTAL])
+            if total is None:
                 continue
 
-            v = safe_float(row.iloc[col_idx])
-            if v is None:
-                continue
+            agricultura = safe_float(row.iloc[base + OFF_AGRICULTURA]) or 0
+            industria   = sum(safe_float(row.iloc[base + o]) or 0 for o in OFF_INDUSTRIA)
+            servicos    = total - agricultura - industria
 
-            rows_sect.append({
-                "codigo_ine": cod,
-                "nome": nome,
-                "cae": cae_raw,
-                "ano": int(ano),
-                "valor": v,
+            rows_tot.append({
+                "codigo_ine": codigo, "nome": nome, "ano": int(ano), "valor": total,
             })
+            for cae, valor in [
+                ("Agricultura", agricultura),
+                ("Industria",   industria),
+                ("Servicos",    servicos),
+            ]:
+                rows_sect.append({
+                    "codigo_ine": codigo, "nome": nome, "ano": int(ano),
+                    "cae": cae, "valor": valor,
+                })
 
+    df_tot  = pd.DataFrame(rows_tot)
     df_sect = pd.DataFrame(rows_sect)
 
-    if df_sect.empty:
-        print(" ⚠ VN sectores vazio")
-        df_tot = pd.DataFrame(columns=["codigo_ine", "nome", "ano", "valor"])
-        return {"total": df_tot, "sectores": df_sect}
-
-    df_tot = (
-        df_sect
-        .groupby(["codigo_ine", "nome", "ano"], as_index=False)["valor"]
-        .sum()
-    )
-
-    print(
-        f" VN total: {len(df_tot)} reg · {df_tot['codigo_ine'].nunique()} mun · "
-        f"anos {sorted(df_tot['ano'].unique())}"
-    )
-    print(
-        f" VN sectores: {len(df_sect)} reg · {df_sect['codigo_ine'].nunique()} mun"
-    )
+    n_mun = df_tot[df_tot["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f" VN total: {len(df_tot)} reg · {n_mun} municípios + Portugal · "
+          f"anos {sorted(df_tot['ano'].unique())}")
+    print(f" VN sectores (macro): {len(df_sect)} reg")
 
     return {"total": df_tot, "sectores": df_sect}
 

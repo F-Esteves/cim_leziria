@@ -133,10 +133,10 @@ ambiente:
       anos:          [2024, 2025]
 
   residuos:
-    ficheiro:    "Residuos-urbanos-geridos.xls"   
-    formato:     "xls"                             
-    skiprows:    10                                
-    anos:        [2021, 2022, 2023, 2024]
+    ficheiro:    "Residuos-urbanos-geridos-Portugal-incluido.xls"
+    formato:     "xls"
+    anos:        [2024, 2023, 2022, 2021]
+    inclui_portugal: true
 
 # =============================================================
 # CLUSTER 3 — MOBILIDADE
@@ -145,15 +145,11 @@ ambiente:
 mobilidade:
  
   veiculos:
-    ficheiro:    "Registo_propriedade_veiculos_novos.xls"
+    ficheiro:    "Registo-propriedade-veiculos-novos-por-1000-habitantes.xls"
     formato:     "xls"
-    skiprows:    10   # linhas 0-9 são metadados INE; linha 10 é o header de unidades
-    anos:        [2021, 2022, 2023, 2024]   # INE publica em ordem descendente (2024→2021)
-    # Estrutura: col[0]=código+nome ("1D31403: Almeirim")
-    # 4 anos × 4 tipos = 16 blocos de colunas
-    # Tipos por bloco: T:Total | 1:Ligeiros | 2:Pesados | 3:Tratores agrícolas
-    n_tipos:     4
+    anos:        [2025, 2024, 2023, 2022, 2021]
     unidade:     "veiculos_por_1000hab"
+    inclui_portugal: false
  
   pontos_carregamento:
  
@@ -246,10 +242,6 @@ modos_vida:
       ficheiro:    "Taxa_de_criminalidade.xls"
       formato:     "xls"
       anos:        [2021, 2022, 2023, 2024]   # INE publica em ordem descendente
-      # Estrutura: 4 anos × 7 categorias de crime (sem skiprows — leitura directa)
-      # Categorias: total | integridade_fisica | furto_esticao | furto_veiculo
-      #             | alcool | sem_habilitacao | patrimonio
-      # '…' = dado confidencial → tratado como None
  
   educacao:
  
@@ -268,15 +260,49 @@ modos_vida:
       encoding:    "utf-8"
       ano:         2021   # Censos 2021 — dado pontual
       # Col 1 = total HM (valor absoluto)
- 
+
+    ensino_superior_inscritos:
+      ficheiro: "Alunos-inscritos-ensino-superior.xls"
+      formato: "xls"
+      ano: "2024/2025"
+      inclui_portugal: true
+
+    ensino_nao_superior_matriculados:
+      ficheiro: "Alunos-matriculados-ensino-nao-superior.xls"
+      formato: "xls"
+      inclui_portugal: true
+
+    ensino_secundario_orientado:
+      ficheiro: "Alunos-matriculados-ensino-secundario-orientado.xls"
+      formato: "xls"
+      ano: "2024/2025"
+      inclui_portugal: true
+
+    taxa_retencao_desistencia:
+      ficheiro: "Taxa-retencao-desistencia-ensino-basico.xls"
+      formato: "xls"
+      inclui_portugal: true
+
+    taxa_transicao_conclusao:
+      ficheiro: "Taxa-transicao-conclusao-ensino-basico.xls"
+      formato: "xls"
+      inclui_portugal: true
+
   turismo:
- 
+
     dormidas:
       ficheiro:    "Dormidas_nos_alojamentos_turísticos.xlsx"
       formato:     "xlsx"
       skiprows:    11
       anos:        [2021, 2022, 2023, 2024]
       # Métrica única (bloco 0): dormidas_100hab
+
+    alojamentos_tipo:
+      ficheiro: "Alojamentos-turisticos-total-por-tipo.xlsx"
+      formato: "xlsx"
+      skiprows: 11
+      anos: [2019, 2020, 2021, 2022, 2023, 2024]
+      inclui_portugal: true
  
   habitacao:
  
@@ -300,8 +326,6 @@ economia:
       ficheiro: "Populacao-empregada-por-Local-de-residencia-Sexo-Setor-de-atividade-e-Situacao-na-profissao.xls"
       formato: "xls"
       ano: 2021                  # Censos — dado pontual
-      # Dimensões: Sexo × Setor de atividade × Situação na profissão
-      # Colunas esperadas após parse: codigo_ine | sexo | setor | situacao | valor
       notas: "Taxa de emprego, estrutura setorial, conta própria, grandes empregadores"
 
     conta_outrem:
@@ -353,24 +377,23 @@ economia:
       ficheiro: "Nascimentos-mortes-e-sobrevivencia-a-1-ano-de-empresas.xlsx"
       formato: "xlsx"
       skiprows: 11               # padrão PORDATA
-      # Blocos de colunas por ano: nascidas | cessadas | sobreviventes_1ano
-      # Ordem descendente (ano mais recente → mais antigo)
       notas: >
         Métricas: taxa_natalidade_emp_pct, taxa_mortalidade_emp_pct,
         taxa_sobrevivencia_1ano_pct.
         total_empresas = nascidas + cessadas no período.
 
     volume_negocios:
-      ficheiro: "volume-de-negocios.xls"
+      ficheiro: "Volume-de-negocios-por-localizacao-geografica.xls"
       formato: "xls"
-      skiprows: 10
-      anos: [2015, 2016, 2017, 2018, 2019]
-      # Estrutura: col[0]=código+nome, depois blocos por ano × sector CAE Rev.3
-      # Sectores: Total | A (agricultura) | B-F (indústria) | G-N (serviços) | O-U (outros)
+      anos: [2024, 2023, 2022]
+      inclui_portugal: true
       notas: >
-        Métricas: vn_per_capita_e, estrutura_vn_agricultura_pct,
-        estrutura_vn_industria_pct, estrutura_vn_servicos_pct.
-        Último ano disponível: 2019 (NUTS 2013).
+        Métricas: eco_vn_per_capita_e, eco_estrutura_vn_agricultura_pct,
+        eco_estrutura_vn_industria_pct, eco_estrutura_vn_servicos_pct.
+        Mapeamento macro-sectorial (documentado no extrator):
+        Agricultura = secção A; Indústria = secções B+C+D+E+F;
+        Serviços = resto (Total − Agricultura − Indústria), por não haver
+        secção K (financeira/seguros) nesta fonte.
 
   # ── Populações auxiliares (para métricas per capita) ────────
   populacao:
@@ -405,10 +428,31 @@ sociedade:
     anos_serie: [2008, 2023]
     unidade: "residentes_estrangeiros_absoluto"
 
-  censos_2021:
-    ficheiro: "Populacao-residente-por-Local-de-residencia.xls"
+  saldo_natural:
+    ficheiro: "Saldo-natural-INE-2021-2025.xls"
     formato: "xls"
-    ano: 2021
+    anos_serie: [2021, 2025]
+    inclui_portugal: true
+
+  censos_2021:
+    ficheiro: "Populacao-residente-por-Local-de-residencia-2021-2025.xls"
+    formato: "xls"
+    anos_serie: [2021, 2025]
+    inclui_portugal: true
+    unidade: "habitantes"
+
+  variacao_populacional:
+    ficheiro: "Variacao-populacional-INE-2021-2025.xls"
+    formato: "xls"
+    anos_serie: [2021, 2025]
+    inclui_portugal: true
+    unidade: "pessoas"
+
+  populacao_media_anual:
+    ficheiro: "Populacao-media-anual-residente.xls"
+    formato: "xls"
+    anos_serie: [2021, 2025]
+    inclui_portugal: false
     unidade: "habitantes"
 
   areas_2011:

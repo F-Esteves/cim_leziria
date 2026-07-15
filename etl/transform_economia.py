@@ -4,6 +4,7 @@ from etl.utils import (
     STAGING_DIR, MUNICIPIOS,
     safe_float as safe_num,
     normalizar_scores, enforce_schema,
+    carregar_populacao_referencia, carregar_populacao_serie,
 )
 
 CAE_SECTOR = {
@@ -223,17 +224,20 @@ def calcular_metricas_rendimento(df_rb, df_irs, df_ipc, df_ppc,
 
 def calcular_metricas_empresarialidade(df_nasc, df_mort, df_sobr,
                                         df_vn_tot, df_vn_sect,
-                                        pop_total: dict) -> pd.DataFrame:
+                                        pop_serie: dict) -> pd.DataFrame:
     """
     Métricas:
-      eco_empresas_nascidas_n           — nascidas (valor absoluto)
-      eco_empresas_mortas_n             — mortas (valor absoluto)
-      eco_taxa_sobrevivencia_1ano_pct   — sobrev_t / nascidas_(t-1) × 100
-      eco_vn_per_capita_e               — VN_total / pop
+      eco_empresas_nascidas_n            — nascidas (valor absoluto)
+      eco_empresas_mortas_n              — mortas (valor absoluto)
+      eco_taxa_sobrevivencia_1ano_pct    — sobrev_t / nascidas_(t-1) × 100
+      eco_vn_per_capita_e                — VN_total / pop (mesmo ano; inclui Portugal)
+      eco_estrutura_vn_agricultura_pct   — VN Agricultura / VN Total × 100
+      eco_estrutura_vn_industria_pct     — VN Indústria / VN Total × 100
+      eco_estrutura_vn_servicos_pct      — VN Serviços / VN Total × 100
 
-    NOTA: o ficheiro volume-de-negocios.xls fornece apenas o Total CAE por
-    município, sem desagregação sectorial ao nível municipal. As métricas
-    eco_estrutura_vn_* não podem ser calculadas a partir desta fonte.
+    A partir da nova fonte (INE, CAE Rev.3 detalhado, com Portugal), as
+    métricas de estrutura sectorial passam a ser calculáveis — a fonte
+    anterior só tinha o Total por município, sem desagregação sectorial.
     """
     rows = []
 
@@ -267,15 +271,34 @@ def calcular_metricas_empresarialidade(df_nasc, df_mort, df_sobr,
                      "ano": int(ano), "metrica_codigo": "eco_saldo_empresarial_n",
                      "valor": round(n - m, 0), "flag_estimado": False})
 
-    # VN per capita
+    # VN per capita — população do MESMO ano (a série de VN é 2022-2024;
+    # pop_serie inclui Portugal, para o benchmark nacional).
     for _, r in df_vn_tot.iterrows():
-        v = safe_num(r["valor"])
-        pop = pop_total.get(r["codigo_ine"])
+        v   = safe_num(r["valor"])
+        pop = pop_serie.get((r["codigo_ine"], int(r["ano"])))
         if v and pop and pop > 0:
             rows.append({"codigo_ine": r["codigo_ine"], "nome": r["nome"],
                          "ano": int(r["ano"]), "metrica_codigo": "eco_vn_per_capita_e",
                          "valor": round(v / pop, 2),
                          "flag_estimado": False})
+
+    # Estrutura sectorial (Agricultura / Indústria / Serviços) — % do Total
+    if df_vn_sect is not None and not df_vn_sect.empty:
+        tot_idx = df_vn_tot.set_index(["codigo_ine", "ano"])["valor"]
+        metrica_por_cae = {
+            "Agricultura": "eco_estrutura_vn_agricultura_pct",
+            "Industria":   "eco_estrutura_vn_industria_pct",
+            "Servicos":    "eco_estrutura_vn_servicos_pct",
+        }
+        for _, r in df_vn_sect.iterrows():
+            cod, ano, cae, valor = r["codigo_ine"], int(r["ano"]), r["cae"], safe_num(r["valor"])
+            total = tot_idx.get((cod, ano))
+            metrica = metrica_por_cae.get(cae)
+            if metrica and valor is not None and total and total > 0:
+                rows.append({"codigo_ine": cod, "nome": r["nome"], "ano": ano,
+                             "metrica_codigo": metrica,
+                             "valor": round(valor / total * 100, 2),
+                             "flag_estimado": False})
 
     df_out = pd.DataFrame(rows)
     print(f"   Empresarialidade: {len(df_out)} registos · {df_out['metrica_codigo'].nunique()} métricas")
@@ -297,22 +320,31 @@ _METRICAS_SEM_NORMALIZACAO = {
 def main():
     print("\n=== TRANSFORM · Cluster 5 — Economia ===\n")
 
-    soc_path = STAGING_DIR / "soc_censos_2021.parquet"
-    if soc_path.exists():
-        df_pop    = pd.read_parquet(soc_path)
-        pop_total = df_pop.set_index("codigo_ine")["valor"].to_dict()
-        pop_ativa = pop_total.copy()
-        print(f"  Pop Censos 2021 carregada de soc_censos_2021.parquet — {len(pop_total)} municípios")
+    pop_total = carregar_populacao_referencia()
+    # A taxa de emprego usa dados do Censos 2021 (numerador fixo — o INE só
+    # atualiza o Censos de 10 em 10 anos, próximo em 2031). Antes dividia-se
+    # por pop_total do ANO_REFERENCIA_POPULACAO (2025) — desfasamento de
+    # anos com o numerador. Agora usa-se a população residente do MESMO
+    # ano (2021), disponível na série anual do INE, para consistência
+    # interna. Continua sem ser "população ativa" a sério (população em
+    # idade de trabalhar / força de trabalho) — é população residente
+    # total, mas ao menos o ano bate certo com o numerador.
+    pop_ativa = carregar_populacao_referencia(ano=2021)
+    if pop_total:
+        print(f"  Pop. residente (INE, ano de referência) — {len(pop_total)} municípios")
     else:
         print("  ⚠  soc_censos_2021.parquet não encontrado — métricas per capita serão NULL")
         print("     Corre extract_sociedade.py primeiro")
-        pop_ativa = {}
-        pop_total = {}
 
     print("[ 5.1 ] Emprego e Estrutura")
+    # NOTA: df_co (emprego por conta de outrem) é lido mas NÃO é usado por
+    # calcular_metricas_emprego() — a função só trabalha com df_cens_bruto.
+    # Ficava a mais na chamada (bug pré-existente: função só aceita 2
+    # argumentos). Mantido aqui caso seja para vir a alimentar uma métrica
+    # futura; por agora só serve de leitura sem efeito.
     df_co        = pd.read_parquet(STAGING_DIR / "eco_emprego_conta_outrem.parquet")
     df_cens_bruto = pd.read_parquet(STAGING_DIR / "eco_emprego_censos_bruto.parquet")
-    metr_emp     = calcular_metricas_emprego(df_co, df_cens_bruto, pop_ativa)
+    metr_emp     = calcular_metricas_emprego(df_cens_bruto, pop_ativa)
 
     print("\n[ 5.2 ] Rendimento e Capacidade Fiscal")
     df_rb  = pd.read_parquet(STAGING_DIR / "eco_rendimento_bruto.parquet")
@@ -328,7 +360,8 @@ def main():
     df_vn_tot = pd.read_parquet(STAGING_DIR / "eco_volume_negocios_total.parquet")
     df_vn_sec = pd.read_parquet(STAGING_DIR / "eco_volume_negocios_sectores.parquet")
     metr_emp2 = calcular_metricas_empresarialidade(
-        df_nasc, df_mort, df_sobr, df_vn_tot, df_vn_sec, pop_total)
+        df_nasc, df_mort, df_sobr, df_vn_tot, df_vn_sec,
+        carregar_populacao_serie(incluir_pt=True))
 
     df_all = pd.concat([metr_emp, metr_rend, metr_emp2], ignore_index=True)
     df_all = normalizar_scores(

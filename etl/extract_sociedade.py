@@ -1,5 +1,4 @@
 import numpy as np
-import re
 import pandas as pd
 import yaml
 from pathlib import Path
@@ -20,12 +19,6 @@ LEZIRIA = list(MUNICIPIOS.keys())   # 11 códigos INE
 # ── Parser genérico INE wide (Total / Masculino / Feminino × anos) ────────────
 
 def parse_ine_sexo_wide(path: Path, metrica: str) -> pd.DataFrame:
-    """
-    Estrutura INE:
-      Linha X:   ... Total ... Masculino ... Feminino ...
-      Linha X+1: ... ano1 ano2 ... (anos como int/float)
-      Linha X+2+: dados por município
-    """
     df_raw = pd.read_excel(path, header=None)
 
     # Encontrar linha com labels de sexo
@@ -114,45 +107,220 @@ def extrair_populacao_estrangeira() -> pd.DataFrame:
     return df
 
 
-def extrair_censos_2021() -> pd.DataFrame:
-    cfg_s = cfg["sociedade"]["censos_2021"]
-    path  = RAW_DIR / cfg_s["ficheiro"]
+def extrair_saldo_natural() -> pd.DataFrame:
+    cfg_s  = cfg["sociedade"]["saldo_natural"]
+    path   = RAW_DIR / cfg_s["ficheiro"]
     engine = "xlrd" if str(path).endswith(".xls") else None
     print(f"  → {path.name}")
 
     kw = {"engine": engine} if engine else {}
-    df_raw = pd.read_excel(path, header=None, **kw)
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
+
+    # Encontrar a linha de anos (primeira linha com vários valores tipo ano,
+    # que no ficheiro vêm como texto, ex.: "2025")
+    def _como_ano(v) -> int | None:
+        try:
+            iv = int(float(v))
+            return iv if 1990 < iv < 2100 else None
+        except (TypeError, ValueError):
+            return None
+
+    anos_row_idx = None
+    for i, row in df_raw.iterrows():
+        vals = [v for v in row.values if _como_ano(v) is not None]
+        if len(vals) >= 2:
+            anos_row_idx = i
+            break
+    if anos_row_idx is None:
+        raise ValueError(f"Não encontrada linha de anos em {path.name}")
+
+    anos_row  = df_raw.iloc[anos_row_idx]
+    ano_cols  = [(ci, _como_ano(v)) for ci, v in enumerate(anos_row.values) if _como_ano(v) is not None]
 
     records = []
+    for _, row in df_raw.iloc[anos_row_idx + 2:].iterrows():
+        nome_raw = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        cod_raw  = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        if not nome_raw or not cod_raw:
+            continue
+
+        if cod_raw == "PT" or nome_raw == "Portugal":
+            codigo, nome = "PT", "Portugal"
+        else:
+            codigo = encontrar_codigo(cod_raw)
+            if codigo not in MUNICIPIOS:
+                continue
+            nome = MUNICIPIOS[codigo]
+
+        for ci, ano in ano_cols:
+            valor = safe_float(row.iloc[ci]) if ci < len(row) else None
+            if valor is None:
+                continue
+            records.append({
+                "codigo_ine": codigo,
+                "municipio":  nome,
+                "ano":        ano,
+                "metrica":    "Saldo_natural",
+                "valor":      valor,
+            })
+
+    df = pd.DataFrame(records)
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f"     {n_mun} municípios + Portugal · anos {sorted(df['ano'].unique())}")
+    return df
+
+
+def extrair_populacao_residente() -> pd.DataFrame:
+    cfg_s  = cfg["sociedade"]["censos_2021"]
+    path   = RAW_DIR / cfg_s["ficheiro"]
+    engine = "xlrd" if str(path).endswith(".xls") else None
+    print(f"  → {path.name}")
+
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
+
+    records = []
+    ano_atual = None
     for _, row in df_raw.iterrows():
-        cell = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
-        m = re.match(r"(\d{4})\s*:\s*(.+)", cell)
-        if not m:
-            continue
-        codigo = m.group(1)
-        if codigo not in LEZIRIA:
-            continue
-        nome = MUNICIPIOS[codigo]
-        # Somar as 20 células da crosstab (cols 2+): sem subtotais no ficheiro,
-        # cada célula é uma combinação única → soma = população total residente.
-        total = 0.0
-        for v in row.values[2:]:
+        ano_cell = row.iloc[0]
+        if pd.notna(ano_cell):
             try:
-                fv = float(v)
-                if not np.isnan(fv):
-                    total += fv
+                ano_atual = int(float(ano_cell))
             except (TypeError, ValueError):
                 pass
+
+        nome_raw = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        cod_raw  = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ""
+        if not nome_raw or ano_atual is None:
+            continue
+
+        val_h = safe_float(row.iloc[3]) if len(row) > 3 else None
+        val_m = safe_float(row.iloc[5]) if len(row) > 5 else None
+        if val_h is None and val_m is None:
+            continue
+        total = (val_h or 0) + (val_m or 0)
+
+        if cod_raw == "PT" or nome_raw == "Portugal":
+            codigo, nome = "PT", "Portugal"
+        else:
+            codigo = encontrar_codigo(cod_raw) or encontrar_codigo(nome_raw)
+            if codigo not in LEZIRIA:
+                continue
+            nome = MUNICIPIOS[codigo]
+
         records.append({
             "codigo_ine": codigo,
             "municipio":  nome,
-            "ano":        cfg_s.get("ano", 2021),
-            "metrica":    "Pop_residente_Censos2021",
+            "ano":        ano_atual,
+            "metrica":    "Pop_residente",
             "valor":      total,
         })
 
     df = pd.DataFrame(records)
-    print(f"     {len(df)} municípios · Censos 2021")
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    n_pt  = (df["codigo_ine"] == "PT").sum()
+    print(f"     {n_mun} municípios × {sorted(df['ano'].unique())} · "
+          f"{n_pt} registos de Portugal")
+    return df
+
+
+def extrair_variacao_populacional() -> pd.DataFrame:
+    cfg_v  = cfg["sociedade"]["variacao_populacional"]
+    path   = RAW_DIR / cfg_v["ficheiro"]
+    engine = "xlrd" if str(path).endswith(".xls") else None
+    print(f"  → {path.name}")
+
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
+
+    def _como_ano(v) -> int | None:
+        try:
+            iv = int(float(v))
+            return iv if 1990 < iv < 2100 else None
+        except (TypeError, ValueError):
+            return None
+
+    anos_row_idx = None
+    for i, row in df_raw.iterrows():
+        vals = [v for v in row.values if _como_ano(v) is not None]
+        if len(vals) >= 2:
+            anos_row_idx = i
+            break
+    if anos_row_idx is None:
+        raise ValueError(f"Não encontrada linha de anos em {path.name}")
+
+    anos_row = df_raw.iloc[anos_row_idx]
+    ano_cols = [(ci, _como_ano(v)) for ci, v in enumerate(anos_row.values) if _como_ano(v) is not None]
+
+    records = []
+    for _, row in df_raw.iloc[anos_row_idx + 2:].iterrows():
+        nome_raw = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        cod_raw  = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        if not nome_raw or not cod_raw:
+            continue
+
+        if cod_raw == "PT" or nome_raw == "Portugal":
+            codigo, nome = "PT", "Portugal"
+        else:
+            codigo = encontrar_codigo(cod_raw)
+            if codigo not in MUNICIPIOS:
+                continue
+            nome = MUNICIPIOS[codigo]
+
+        for ci, ano in ano_cols:
+            valor = safe_float(row.iloc[ci]) if ci < len(row) else None
+            if valor is None:
+                continue
+            records.append({
+                "codigo_ine": codigo, "municipio": nome, "ano": ano,
+                "metrica": "Variacao_populacional", "valor": valor,
+            })
+
+    df = pd.DataFrame(records)
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f"     {n_mun} municípios + Portugal · anos {sorted(df['ano'].unique())}")
+    return df
+
+
+def extrair_populacao_media_anual() -> pd.DataFrame:
+    cfg_v  = cfg["sociedade"]["populacao_media_anual"]
+    path   = RAW_DIR / cfg_v["ficheiro"]
+    engine = "xlrd" if str(path).endswith(".xls") else None
+    print(f"  → {path.name}")
+
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
+
+    records = []
+    ano_atual = None
+    for _, row in df_raw.iterrows():
+        ano_cell = row.iloc[0]
+        if pd.notna(ano_cell):
+            try:
+                ano_atual = int(float(ano_cell))
+            except (TypeError, ValueError):
+                pass
+
+        nome_raw = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        cod_raw  = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ""
+        if not nome_raw or ano_atual is None:
+            continue
+
+        codigo = encontrar_codigo(cod_raw)
+        if codigo not in MUNICIPIOS:
+            continue
+        nome = MUNICIPIOS[codigo]
+
+        valor = safe_float(row.iloc[3]) if len(row) > 3 else None
+        if valor is None:
+            continue
+        records.append({
+            "codigo_ine": codigo, "municipio": nome, "ano": ano_atual,
+            "metrica": "Pop_media_anual", "valor": valor,
+        })
+
+    df = pd.DataFrame(records)
+    print(f"     {df['codigo_ine'].nunique()} municípios · anos {sorted(df['ano'].unique())}")
     return df
 
 
@@ -210,18 +378,31 @@ def main():
     df_est = extrair_populacao_estrangeira()
     df_est.to_parquet(STAGING_DIR / "soc_pop_estrangeira.parquet", index=False)
 
-    print("\n[6.4] Censos 2021")
-    df_c21 = extrair_censos_2021()
+    print("\n[6.4] População residente (INE, anual 2021-2025, com Portugal)")
+    df_c21 = extrair_populacao_residente()
     df_c21.to_parquet(STAGING_DIR / "soc_censos_2021.parquet", index=False)
 
-    print("\n[6.5] Áreas e pop 2011")
+    print("\n[6.5] Saldo natural (fonte direta INE, com Portugal)")
+    df_sn = extrair_saldo_natural()
+    df_sn.to_parquet(STAGING_DIR / "soc_saldo_natural.parquet", index=False)
+
+    print("\n[6.6] Variação populacional (com Portugal)")
+    df_vp = extrair_variacao_populacional()
+    df_vp.to_parquet(STAGING_DIR / "soc_variacao_populacional.parquet", index=False)
+
+    print("\n[6.7] População média anual residente")
+    df_pma = extrair_populacao_media_anual()
+    df_pma.to_parquet(STAGING_DIR / "soc_populacao_media_anual.parquet", index=False)
+
+    print("\n[6.8] Áreas e pop 2011")
     df_ar = extrair_areas_2011()
     df_ar.to_parquet(STAGING_DIR / "soc_areas_2011.parquet", index=False)
 
     print("\n✓ Extract concluído — ficheiros em data/staging/")
     for f in ["soc_nados_vivos.parquet", "soc_obitos.parquet",
               "soc_pop_estrangeira.parquet", "soc_censos_2021.parquet",
-              "soc_areas_2011.parquet"]:
+              "soc_saldo_natural.parquet", "soc_variacao_populacional.parquet",
+              "soc_populacao_media_anual.parquet", "soc_areas_2011.parquet"]:
         n = len(pd.read_parquet(STAGING_DIR / f))
         print(f"   {f}  ({n} registos)")
 

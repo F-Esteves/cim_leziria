@@ -176,68 +176,60 @@ def extrair_comunidades() -> pd.DataFrame:
 # ── 2.2 Resíduos ───────────────────────────────────────────────
 
 def extrair_residuos() -> pd.DataFrame:
-    cfg_r = cfg["ambiente"]["residuos"]
-    path  = RAW_DIR / cfg_r["ficheiro"]
-    anos  = sorted(cfg_r["anos"], reverse=True)   # INE: mais recente primeiro
-
+    cfg_r  = cfg["ambiente"]["residuos"]
+    path   = RAW_DIR / cfg_r["ficheiro"]
+    anos   = cfg_r["anos"]   # já em ordem [2024, 2023, 2022, 2021]
+    engine = "xlrd" if str(path).endswith(".xls") else None
     print(f"  → Lendo {path.name}")
-    df_raw = pd.read_excel(path, skiprows=cfg_r["skiprows"], header=0)
-    df_raw.columns = [str(c).strip() for c in df_raw.columns]
 
-    col_mun = df_raw.columns[0]   # nome do município
-    col_cod = df_raw.columns[1]   # código INE ("1D31403")
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
 
-    # Descarta linha de totais regionais ("Lezíria do Tejo" / "1D3") e rodapés
-    df_raw = df_raw.dropna(subset=[col_mun]).copy()
-    df_raw = df_raw[~df_raw[col_mun].astype(str).str.contains(
-        r"INE|Última|http|fonte|©|^nan$", case=False, regex=True, na=False
-    )].copy()
-
-    def extrair_cod_ine(v) -> str | None:
-        raw = str(v).strip()
-        m = re.search(r"1D3(\d{4})", raw)
-        if m:
-            cod = m.group(1)
-            return cod if cod in MUNICIPIOS else None
-        return None
-
-    df_raw["codigo_ine"] = df_raw[col_cod].apply(extrair_cod_ine)
-    df_filt = df_raw[df_raw["codigo_ine"].notna()].copy()
-
-    if df_filt.empty:
-        print(f"  ⚠ Nenhum município encontrado em {path.name}")
-        return pd.DataFrame()
-    data_cols = [
-        c for c in df_filt.columns
-        if c not in (col_mun, col_cod, "codigo_ine")
-        and pd.to_numeric(df_filt[c], errors="coerce").notna().any()
-    ]
-    n_destinos = 5
-    n_anos     = len(anos)
-
-    if len(data_cols) < n_anos * n_destinos:
-        print(f"  ⚠ Apenas {len(data_cols)} colunas numéricas (esperadas {n_anos * n_destinos})")
+    n_cat      = 4
+    bloco_cols = n_cat * 2   # cada categoria ocupa 2 colunas (valor + NaN)
 
     rows = []
-    for i, ano in enumerate(anos):
-        base = i * n_destinos
-        if base + n_destinos > len(data_cols):
-            print(f"  ⚠ Colunas insuficientes para o ano {ano} (base={base})")
+    for _, row in df_raw.iterrows():
+        nome_raw = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        cod_raw  = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        if not nome_raw or not cod_raw:
             continue
-        for _, row in df_filt.iterrows():
+
+        if cod_raw == "PT" or nome_raw == "Portugal":
+            codigo, nome = "PT", "Portugal"
+        else:
+            codigo = encontrar_codigo(cod_raw)
+            if codigo not in MUNICIPIOS:
+                continue
+            nome = MUNICIPIOS[codigo]
+
+        for i, ano in enumerate(anos):
+            base = 2 + i * bloco_cols   # colunas 0,1 são nome/código
+            try:
+                aterro  = safe_float(row.iloc[base])
+                val_en  = safe_float(row.iloc[base + 2])
+                val_org = safe_float(row.iloc[base + 4])
+                val_mul = safe_float(row.iloc[base + 6])
+            except IndexError:
+                continue
+            if all(v is None for v in (aterro, val_en, val_org, val_mul)):
+                continue
+
+            total = sum(v or 0 for v in (aterro, val_en, val_org, val_mul))
             rows.append({
-                "codigo_ine":            row["codigo_ine"],
-                "nome":                  row[col_mun],
+                "codigo_ine":            codigo,
+                "nome":                  nome,
                 "ano":                   ano,
-                "total_ton":             safe_float(row[data_cols[base]]),
-                "aterro_ton":            safe_float(row[data_cols[base + 1]]),
-                "val_energetica_ton":    safe_float(row[data_cols[base + 2]]),
-                "val_organica_ton":      safe_float(row[data_cols[base + 3]]),
-                "val_multimaterial_ton": safe_float(row[data_cols[base + 4]]),
+                "total_ton":             round(total, 1) if total else None,
+                "aterro_ton":            aterro,
+                "val_energetica_ton":    val_en,
+                "val_organica_ton":      val_org,
+                "val_multimaterial_ton": val_mul,
             })
 
     df = pd.DataFrame(rows)
-    print(f"     {len(df)} registos · {df['codigo_ine'].nunique()} municípios · anos {sorted(df['ano'].dropna().unique())}")
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f"     {len(df)} registos · {n_mun} municípios + Portugal · anos {sorted(df['ano'].unique())}")
     return df
 
 

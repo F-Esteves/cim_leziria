@@ -261,6 +261,269 @@ def extrair_criminalidade() -> pd.DataFrame:
 
 # ── 4.3 Educação ──────────────────────────────────────────────
 
+# ── Helpers para os novos ficheiros INE (1 ano, 2 categorias, com Portugal) ────
+
+def _valor_ine(v):
+    """Na fonte INE, '-' significa zero/não aplicável (ex.: município sem
+    ensino superior) — não é dado em falta. NaN mantém-se NaN."""
+    if isinstance(v, str) and v.strip() == "-":
+        return 0.0
+    return safe_float(v)
+
+
+def _valor_ine_shifted(row, col: int):
+    """
+    Lê um valor INE na posição 'col', com tolerância a um desvio de coluna
+    observado nestes ficheiros: quando o valor é numérico, fica em 'col';
+    quando é o marcador '-' (zero/não aplicável), o INE por vezes coloca-o
+    em 'col+1' em vez de 'col' (a célula 'col' fica NaN nesse caso — efeito
+    de célula combinada/merge no ficheiro original). Sem isto, esses casos
+    seriam lidos como "sem dados" e a linha toda seria descartada, quando
+    na realidade é um zero legítimo.
+    """
+    if col >= len(row):
+        return None
+    primario = _valor_ine(row.iloc[col])
+    if primario is not None:
+        return primario
+    if col + 1 < len(row):
+        seguinte = row.iloc[col + 1]
+        if isinstance(seguinte, str) and seguinte.strip() == "-":
+            return 0.0
+    return None
+
+
+def _linha_codigo_nome(nome_raw: str, cod_raw: str):
+    """Devolve (codigo_ine, nome) — 'PT' para Portugal, None se não for
+    município da CIM nem Portugal."""
+    if cod_raw == "PT" or nome_raw == "Portugal":
+        return "PT", "Portugal"
+    codigo = extrair_cod_ine(cod_raw)
+    if codigo not in MUNICIPIOS:
+        return None, None
+    return codigo, MUNICIPIOS[codigo]
+
+
+def extrair_ensino_superior_inscritos() -> pd.DataFrame:
+    """
+    Alunos inscritos no ensino superior — quase todos os municípios da CIM
+    não têm instituições de ensino superior (fica a '0' via '-' do INE);
+    só Rio Maior e Santarém têm valores reais. Inclui Portugal.
+
+    5 anos letivos em blocos HORIZONTAIS (não verticais como noutros
+    ficheiros de educação): cada bloco tem 2 categorias (Portuguesa,
+    Estrangeira) × 2 colunas (valor + coluna vazia) = 4 colunas por ano,
+    nos offsets 2, 6, 10, 14, 18 a partir da coluna 2.
+    """
+    cfg_s  = cfg["modos_vida"]["educacao"]["ensino_superior_inscritos"]
+    path   = RAW_DIR / cfg_s["ficheiro"]
+    engine = "xlrd" if str(path).endswith(".xls") else None
+    print(f"  → Lendo {path.name}")
+
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
+
+    # Detetar os blocos de ano na linha "Período de referência dos dados"
+    linha_anos = df_raw.iloc[7]
+    blocos = []  # [(col_inicio, ano), ...]
+    for ci, v in enumerate(linha_anos):
+        if pd.notna(v):
+            m = re.match(r"(\d{4})\s*/\s*\d{4}", str(v).strip())
+            if m:
+                blocos.append((ci, int(m.group(1))))
+
+    rows = []
+    for _, row in df_raw.iterrows():
+        nome_raw = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        cod_raw  = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        codigo, nome = _linha_codigo_nome(nome_raw, cod_raw)
+        if codigo is None:
+            continue
+
+        for base, ano in blocos:
+            v_pt  = _valor_ine_shifted(row, base)
+            v_est = _valor_ine_shifted(row, base + 2)
+            if v_pt is None and v_est is None:
+                continue
+            rows.append({
+                "codigo_ine": codigo, "nome": nome, "ano": ano,
+                "metrica": "ensino_superior_inscritos_n", "valor": (v_pt or 0) + (v_est or 0),
+            })
+
+    df = pd.DataFrame(rows)
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f"     {n_mun} municípios + Portugal · anos {sorted(df['ano'].unique())} "
+          f"(maioria = 0, sem ensino superior local)")
+    return df
+
+
+def extrair_ensino_nao_superior() -> pd.DataFrame:
+    """
+    Alunos matriculados no ensino não superior — 6 níveis (pré-escolar,
+    básico 1º/2º/3º ciclo, secundário, pós-secundário) × Público/Privado.
+    Guarda o total por nível e o total geral. Inclui Portugal.
+
+    O ficheiro tem VÁRIOS anos escolares em blocos verticais (12 linhas
+    cada: Portugal + 11 municípios), por isso seguimos o ano corrente a
+    partir da coluna 0 (só preenchida na 1ª linha de cada bloco) — o
+    mesmo padrão usado em extrair_populacao_residente().
+    """
+    cfg_s  = cfg["modos_vida"]["educacao"]["ensino_nao_superior_matriculados"]
+    path   = RAW_DIR / cfg_s["ficheiro"]
+    engine = "xlrd" if str(path).endswith(".xls") else None
+    print(f"  → Lendo {path.name}")
+
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
+
+    niveis = [
+        ("pre_escolar",       3),
+        ("basico_1ciclo",     7),
+        ("basico_2ciclo",    11),
+        ("basico_3ciclo",    15),
+        ("secundario",       19),
+        ("pos_secundario",   23),
+    ]
+
+    rows = []
+    ano_atual = None
+    for _, row in df_raw.iterrows():
+        periodo_cell = row.iloc[0]
+        if pd.notna(periodo_cell):
+            m = re.match(r"(\d{4})", str(periodo_cell).strip())
+            if m:
+                ano_atual = int(m.group(1))
+
+        nome_raw = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        cod_raw  = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ""
+        codigo, nome = _linha_codigo_nome(nome_raw, cod_raw)
+        if codigo is None or ano_atual is None:
+            continue
+
+        total_geral = 0.0
+        linha_valida = False   # confirma que esta é mesmo uma linha de dados
+        for nivel, base in niveis:
+            publico = _valor_ine(row.iloc[base])     if base     < len(row) else None
+            privado = _valor_ine(row.iloc[base + 2])  if base + 2 < len(row) else None
+            if base >= len(row):
+                continue
+            linha_valida = True
+            # NaN aqui = zero implícito (ex.: sem oferta privada nesse nível,
+            # ou sem pós-secundário no município) — mesma convenção do "-"
+            # usado noutros ficheiros INE, só que codificada em branco.
+            subtotal = (publico or 0) + (privado or 0)
+            total_geral += subtotal
+            rows.append({
+                "codigo_ine": codigo, "nome": nome, "ano": ano_atual,
+                "metrica": f"ensino_matriculados_{nivel}_n", "valor": subtotal,
+            })
+
+        if linha_valida:
+            rows.append({
+                "codigo_ine": codigo, "nome": nome, "ano": ano_atual,
+                "metrica": "ensino_nao_superior_total_n", "valor": total_geral,
+            })
+
+    df = pd.DataFrame(rows)
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f"     {n_mun} municípios + Portugal · anos {sorted(df['ano'].unique())} · "
+          f"níveis: {[n for n,_ in niveis]}")
+    return df
+
+
+def extrair_ensino_secundario_orientado() -> pd.DataFrame:
+    cfg_s  = cfg["modos_vida"]["educacao"]["ensino_secundario_orientado"]
+    path   = RAW_DIR / cfg_s["ficheiro"]
+    engine = "xlrd" if str(path).endswith(".xls") else None
+    print(f"  → Lendo {path.name}")
+
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
+
+    N_CATEGORIAS = 6
+    BLOCO_COLS   = N_CATEGORIAS * 2
+
+    linha_anos = df_raw.iloc[7]
+    blocos = []
+    for ci, v in enumerate(linha_anos):
+        if pd.notna(v):
+            m = re.match(r"(\d{4})\s*/\s*\d{4}", str(v).strip())
+            if m:
+                blocos.append((ci, int(m.group(1))))
+
+    rows = []
+    for _, row in df_raw.iterrows():
+        nome_raw = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        cod_raw  = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        codigo, nome = _linha_codigo_nome(nome_raw, cod_raw)
+        if codigo is None:
+            continue
+
+        for base, ano in blocos:
+            valores = [
+                _valor_ine_shifted(row, base + off)
+                for off in range(0, BLOCO_COLS, 2)
+            ]
+            if all(v is None for v in valores):
+                continue
+            rows.append({
+                "codigo_ine": codigo, "nome": nome, "ano": ano,
+                "metrica": "ensino_secundario_orientado_n",
+                "valor": sum(v or 0 for v in valores),
+            })
+
+    df = pd.DataFrame(rows)
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f"     {n_mun} municípios + Portugal · anos {sorted(df['ano'].unique())}")
+    return df
+
+
+def _extrair_taxa_ine_por_sexo(cfg_key: str, metrica_prefixo: str) -> pd.DataFrame:
+    cfg_s  = cfg["modos_vida"]["educacao"][cfg_key]
+    path   = RAW_DIR / cfg_s["ficheiro"]
+    engine = "xlrd" if str(path).endswith(".xls") else None
+    print(f"  → Lendo {path.name}")
+
+    kw = {"engine": engine} if engine else {}
+    df_raw = pd.read_excel(path, sheet_name="Quadro", header=None, **kw)
+
+    rows = []
+    ano_atual = None
+    for _, row in df_raw.iterrows():
+        periodo_cell = row.iloc[0]
+        if pd.notna(periodo_cell):
+            m = re.match(r"(\d{4})", str(periodo_cell).strip())
+            if m:
+                ano_atual = int(m.group(1))
+
+        nome_raw = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+        cod_raw  = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ""
+        codigo, nome = _linha_codigo_nome(nome_raw, cod_raw)
+        if codigo is None or ano_atual is None:
+            continue
+        v_h = _valor_ine_shifted(row, 3)
+        v_m = _valor_ine_shifted(row, 5)
+        for sexo, v in [("h", v_h), ("m", v_m)]:
+            if v is not None:
+                rows.append({
+                    "codigo_ine": codigo, "nome": nome, "ano": ano_atual,
+                    "metrica": f"{metrica_prefixo}_{sexo}_pct", "valor": v,
+                })
+
+    df = pd.DataFrame(rows)
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f"     {n_mun} municípios + Portugal · anos {sorted(df['ano'].unique())}")
+    return df
+
+
+def extrair_taxa_retencao_desistencia() -> pd.DataFrame:
+    return _extrair_taxa_ine_por_sexo("taxa_retencao_desistencia", "tx_retencao_desistencia")
+
+
+def extrair_taxa_transicao_conclusao() -> pd.DataFrame:
+    return _extrair_taxa_ine_por_sexo("taxa_transicao_conclusao", "tx_transicao_conclusao")
+
+
 def extrair_sem_escolaridade() -> pd.DataFrame:
     """INE Censos 2021 — % pop. 15+ anos sem escolaridade completa (HM, H, M)."""
     cfg_s = cfg["modos_vida"]["educacao"]["sem_escolaridade"]
@@ -337,6 +600,46 @@ def extrair_dormidas() -> pd.DataFrame:
     return df
 
 
+def extrair_alojamentos_tipo() -> pd.DataFrame:
+    cfg_s = cfg["modos_vida"]["turismo"]["alojamentos_tipo"]
+    path  = RAW_DIR / cfg_s["ficheiro"]
+    print(f"  → Lendo {path.name}")
+
+    df_mun = ler_pordata_multi(path, cfg_s["skiprows"],
+                               ["alojamentos_turisticos_total_n"],
+                               cfg_s.get("anos"))
+
+    # Portugal: mesma lógica de blocos/sufixos, mas linha "NUTS 2024"
+    df_raw = pd.read_excel(path, skiprows=cfg_s["skiprows"], header=0)
+    df_raw.columns = [str(c).strip() for c in df_raw.columns]
+    col_tipo, col_nome = df_raw.columns[0], df_raw.columns[1]
+    linha_pt = df_raw[(df_raw[col_tipo].astype(str).str.strip() == "NUTS 2024") &
+                       (df_raw[col_nome].astype(str).str.strip() == "Portugal")]
+
+    rows_pt = []
+    if not linha_pt.empty:
+        row = linha_pt.iloc[0]
+        for col in df_raw.columns:
+            m = re.fullmatch(r"(┴ )?(\d{4})", str(col).strip())  # bloco 0 = sem sufixo
+            if not m:
+                continue
+            ano_val = ano_limpo(m.group(2))
+            anos_cfg = cfg_s.get("anos")
+            if ano_val is None or (anos_cfg and ano_val not in anos_cfg):
+                continue
+            v = safe_float(row[col])
+            if v is not None:
+                rows_pt.append({
+                    "codigo_ine": "PT", "nome": "Portugal", "ano": ano_val,
+                    "metrica": "alojamentos_turisticos_total_n", "valor": v,
+                })
+
+    df = pd.concat([df_mun, pd.DataFrame(rows_pt)], ignore_index=True)
+    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+    print(f"     {len(df)} registos · {n_mun} municípios + Portugal · anos {sorted(df['ano'].unique())}")
+    return df
+
+
 # ── 4.5 Habitação ─────────────────────────────────────────────
 
 def extrair_alojamentos() -> pd.DataFrame:
@@ -408,13 +711,25 @@ def main():
     print("\n[ 4.3 ] Educação")
     df_educ_sem = extrair_sem_escolaridade()
     df_educ_sup = extrair_ensino_superior()
+    df_educ_sup_insc = extrair_ensino_superior_inscritos()
+    df_educ_nao_sup   = extrair_ensino_nao_superior()
+    df_educ_sec_orient = extrair_ensino_secundario_orientado()
+    df_tx_retencao   = extrair_taxa_retencao_desistencia()
+    df_tx_transicao  = extrair_taxa_transicao_conclusao()
 
     df_educ_sem.to_parquet(STAGING_DIR / "mdv_sem_escolaridade.parquet", index=False)
     df_educ_sup.to_parquet(STAGING_DIR / "mdv_ensino_superior.parquet",  index=False)
+    df_educ_sup_insc.to_parquet(STAGING_DIR   / "mdv_ensino_superior_inscritos.parquet", index=False)
+    df_educ_nao_sup.to_parquet(STAGING_DIR    / "mdv_ensino_nao_superior.parquet",       index=False)
+    df_educ_sec_orient.to_parquet(STAGING_DIR / "mdv_ensino_secundario_orientado.parquet", index=False)
+    df_tx_retencao.to_parquet(STAGING_DIR     / "mdv_tx_retencao_desistencia.parquet",   index=False)
+    df_tx_transicao.to_parquet(STAGING_DIR    / "mdv_tx_transicao_conclusao.parquet",    index=False)
 
     print("\n[ 4.4 ] Turismo")
     df_dorm = extrair_dormidas()
+    df_aloj_tipo = extrair_alojamentos_tipo()
     df_dorm.to_parquet(STAGING_DIR / "mdv_dormidas.parquet", index=False)
+    df_aloj_tipo.to_parquet(STAGING_DIR / "mdv_alojamentos_tipo.parquet", index=False)
 
     print("\n[ 4.5 ] Habitação")
     df_aloj = extrair_alojamentos()
@@ -423,7 +738,11 @@ def main():
     print("\n✓ Extract concluído — ficheiros em data/staging/")
     for f in ["mdv_hab_medico", "mdv_profissionais", "mdv_utentes_csp", "mdv_consultas_csp",
               "mdv_acidentes_vitimas", "mdv_feridos_mortos", "mdv_criminalidade",
-              "mdv_sem_escolaridade", "mdv_ensino_superior", "mdv_dormidas", "mdv_alojamentos"]:
+              "mdv_sem_escolaridade", "mdv_ensino_superior",
+              "mdv_ensino_superior_inscritos", "mdv_ensino_nao_superior",
+              "mdv_ensino_secundario_orientado", "mdv_tx_retencao_desistencia",
+              "mdv_tx_transicao_conclusao",
+              "mdv_dormidas", "mdv_alojamentos_tipo", "mdv_alojamentos"]:
         print(f"  {f}.parquet")
 
 

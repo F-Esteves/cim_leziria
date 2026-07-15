@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from etl.utils import (
-    STAGING_DIR,
+    STAGING_DIR, PT_CODIGO,
     normalizar_scores, enforce_schema,
 )
 
@@ -36,6 +36,9 @@ def carregar_staging() -> dict[str, pd.DataFrame]:
         "obitos":         pd.read_parquet(STAGING_DIR / "soc_obitos.parquet"),
         "pop_estrangeira":pd.read_parquet(STAGING_DIR / "soc_pop_estrangeira.parquet"),
         "censos_2021":    pd.read_parquet(STAGING_DIR / "soc_censos_2021.parquet"),
+        "saldo_natural":  pd.read_parquet(STAGING_DIR / "soc_saldo_natural.parquet"),
+        "variacao_populacional": pd.read_parquet(STAGING_DIR / "soc_variacao_populacional.parquet"),
+        "populacao_media_anual": pd.read_parquet(STAGING_DIR / "soc_populacao_media_anual.parquet"),
         "areas_2011":     pd.read_parquet(STAGING_DIR / "soc_areas_2011.parquet"),
     }
 
@@ -43,7 +46,6 @@ def carregar_staging() -> dict[str, pd.DataFrame]:
 # ── Transformações ────────────────────────────────────────────────────────────
 
 def calc_pop_total(stg: dict) -> pd.DataFrame:
-    """soc_pop_total_cim — valor directo Censos 2021 por município."""
     df = stg["censos_2021"].copy()
     df["metrica_codigo"]    = "soc_pop_total_cim"
     df["valor_normalizado"] = None
@@ -53,9 +55,13 @@ def calc_pop_total(stg: dict) -> pd.DataFrame:
 
 
 def calc_taxas_demograficas(stg: dict) -> pd.DataFrame:
-    pop = (stg["censos_2021"]
-           .set_index("codigo_ine")["valor"]
-           .rename("pop_2021"))
+    # Com a série anual (2021-2025) a população passou a variar por ano —
+    # o join tem de ser por (codigo_ine, ano), não só por município, senão
+    # cada nados-vivos/óbito ficaria multiplicado por todos os anos de
+    # população disponíveis (linhas duplicadas).
+    pop = (stg["censos_2021"][stg["censos_2021"]["codigo_ine"] != PT_CODIGO]
+           [["codigo_ine", "ano", "valor"]]
+           .rename(columns={"valor": "pop_2021"}))
 
     nv = stg["nados_vivos"].copy()
     ob = stg["obitos"].copy()
@@ -66,7 +72,10 @@ def calc_taxas_demograficas(stg: dict) -> pd.DataFrame:
         on=["codigo_ine", "ano"], how="inner"
     ).rename(columns={"valor": "nados_vivos"})
 
-    merged = merged.join(pop, on="codigo_ine")
+    # Junta a população do mesmo ano (não a de 2021 fixa como antes) —
+    # para anos sem população anual disponível (ex.: antes de 2021), a
+    # taxa fica NULL em vez de usar um valor desatualizado.
+    merged = merged.merge(pop, on=["codigo_ine", "ano"], how="left")
     merged = merged[merged["pop_2021"] > 0]
 
     records = []
@@ -81,7 +90,6 @@ def calc_taxas_demograficas(stg: dict) -> pd.DataFrame:
         for codigo, valor in [
             ("soc_tx_natalidade",  (nv_ / pop_ * 1000) if pd.notna(nv_) and pd.notna(pop_) else np.nan),
             ("soc_tx_mortalidade", (ob_ / pop_ * 1000) if pd.notna(ob_) and pd.notna(pop_) else np.nan),
-            ("soc_saldo_natural",  (nv_ - ob_)         if pd.notna(nv_) and pd.notna(ob_)   else np.nan),
         ]:
             records.append({
                 "codigo_ine": cod, "nome": mun,
@@ -94,13 +102,13 @@ def calc_taxas_demograficas(stg: dict) -> pd.DataFrame:
 
 
 def calc_pct_estrangeira(stg: dict) -> pd.DataFrame:
-    """soc_pct_pop_estrangeira — por ano."""
-    pop = (stg["censos_2021"]
-           .set_index("codigo_ine")["valor"]
-           .rename("pop_2021"))
+    """soc_pct_pop_estrangeira — por ano (população do mesmo ano, 2021-2025)."""
+    pop = (stg["censos_2021"][stg["censos_2021"]["codigo_ine"] != PT_CODIGO]
+           [["codigo_ine", "ano", "valor"]]
+           .rename(columns={"valor": "pop_2021"}))
 
     df = stg["pop_estrangeira"].copy()
-    df = df.join(pop, on="codigo_ine")
+    df = df.merge(pop, on=["codigo_ine", "ano"], how="left")
     df = df[df["pop_2021"] > 0]
     df["valor_calc"] = (df["valor"] / df["pop_2021"] * 100).round(4)
 
@@ -118,20 +126,17 @@ def calc_pct_estrangeira(stg: dict) -> pd.DataFrame:
 
 
 def calc_densidade(stg: dict) -> pd.DataFrame:
-    """soc_densidade_pop — snapshot 2021."""
-    pop = (stg["censos_2021"]
-           .set_index("codigo_ine")[["municipio", "valor"]]
-           .rename(columns={"valor": "pop_2021"}))
+    pop_serie = stg["censos_2021"]
+    pop_serie = pop_serie[pop_serie["codigo_ine"] != PT_CODIGO]
 
     areas = (stg["areas_2011"]
              .query("metrica == 'Area_km2'")
              .set_index("codigo_ine")["valor"]
              .rename("area_km2"))
 
-    df = pop.join(areas)
+    df = pop_serie.merge(areas, on="codigo_ine", how="left")
     df = df[df["area_km2"] > 0]
-    df["valor"] = (df["pop_2021"] / df["area_km2"]).round(2)
-    df = df.reset_index()
+    df["valor"] = (df["valor"] / df["area_km2"]).round(2)
 
     records = []
     for _, row in df.iterrows():
@@ -139,7 +144,7 @@ def calc_densidade(stg: dict) -> pd.DataFrame:
             "codigo_ine":     row["codigo_ine"],
             "nome":           row["municipio"],
             "metrica_codigo": "soc_densidade_pop",
-            "ano":            2021,
+            "ano":            int(row["ano"]),
             "valor":          row["valor"],
             "valor_normalizado": None,
         })
@@ -147,7 +152,15 @@ def calc_densidade(stg: dict) -> pd.DataFrame:
 
 
 def calc_variacao_pop(stg: dict) -> pd.DataFrame:
-    pop2021 = (stg["censos_2021"]
+    # Métrica fixa "2011_2021" — usa sempre o ano 2021 da série anual, mesmo
+    # que ANO_REFERENCIA_POPULACAO (usado noutros clusters como denominador
+    # per capita) seja outro. Se não houver 2021 na série, não faz sentido
+    # calcular esta métrica com outro ano (o nome ficaria enganador).
+    serie_2021 = stg["censos_2021"]
+    serie_2021 = serie_2021[(serie_2021["codigo_ine"] != PT_CODIGO) &
+                             (serie_2021["ano"] == 2021)]
+
+    pop2021 = (serie_2021
                .set_index("codigo_ine")[["municipio", "valor"]]
                .rename(columns={"valor": "pop_2021"}))
 
@@ -172,6 +185,34 @@ def calc_variacao_pop(stg: dict) -> pd.DataFrame:
             "valor_normalizado": None,
         })
     return pd.DataFrame(records)
+
+
+def calc_saldo_natural_direto(stg: dict) -> pd.DataFrame:
+    df = stg["saldo_natural"].copy()
+    df["metrica_codigo"]    = "soc_saldo_natural"
+    df["valor_normalizado"] = None
+    return df.rename(columns={"municipio": "nome"})[
+        ["codigo_ine", "nome", "metrica_codigo", "ano", "valor", "valor_normalizado"]
+    ]
+
+
+def calc_variacao_populacional_anual(stg: dict) -> pd.DataFrame:
+    df = stg["variacao_populacional"].copy()
+    df["metrica_codigo"]    = "soc_variacao_populacional_anual"
+    df["valor_normalizado"] = None
+    return df.rename(columns={"municipio": "nome"})[
+        ["codigo_ine", "nome", "metrica_codigo", "ano", "valor", "valor_normalizado"]
+    ]
+
+
+def calc_populacao_media_anual(stg: dict) -> pd.DataFrame:
+    """soc_pop_media_anual — fonte direta INE. Sem Portugal nesta fonte."""
+    df = stg["populacao_media_anual"].copy()
+    df["metrica_codigo"]    = "soc_pop_media_anual"
+    df["valor_normalizado"] = None
+    return df.rename(columns={"municipio": "nome"})[
+        ["codigo_ine", "nome", "metrica_codigo", "ano", "valor", "valor_normalizado"]
+    ]
 
 
 def calc_saldo_acumulado(stg: dict) -> pd.DataFrame:
@@ -220,11 +261,20 @@ def main():
 
     partes = []
 
-    print("[6.1] Pop. total CIM (Censos 2021)")
+    print("[6.1] Pop. residente CIM + Portugal (INE, série anual 2021-2025)")
     partes.append(calc_pop_total(stg))
 
-    print("[6.2] Taxas demográficas e saldo natural")
+    print("[6.2] Taxas demográficas (natalidade / mortalidade)")
     partes.append(calc_taxas_demograficas(stg))
+
+    print("[6.2b] Saldo natural (fonte direta INE, com Portugal)")
+    partes.append(calc_saldo_natural_direto(stg))
+
+    print("[6.2c] Variação populacional anual (com Portugal)")
+    partes.append(calc_variacao_populacional_anual(stg))
+
+    print("[6.2d] População média anual")
+    partes.append(calc_populacao_media_anual(stg))
 
     print("[6.3] % Pop. estrangeira")
     partes.append(calc_pct_estrangeira(stg))

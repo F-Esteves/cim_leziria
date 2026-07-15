@@ -215,10 +215,13 @@ def extrair_digital_serie(chave: str) -> pd.DataFrame:
     print(f"  → Lendo {path.name}")
 
     # Deteção automática da linha com códigos INE (padrão 1D3XXXX)
+    # NOTA: str(val) por elemento em vez de .astype(str) em bloco — ver
+    # comentário equivalente em extract_economia.py (compatibilidade
+    # pandas 2.x/3.x com StringDtype e NaN).
     df_probe = pd.read_excel(path, header=None)
     primeira_linha = next(
-        (i for i, val in enumerate(df_probe.iloc[:, 0].astype(str))
-         if re.search(r"1D3\d{4}", val)),
+        (i for i, val in enumerate(df_probe.iloc[:, 0])
+         if re.search(r"1D3\d{4}", str(val))),
         10  # fallback
     )
     # skiprows = primeira_linha - 1 para que o header seja a linha anterior aos dados

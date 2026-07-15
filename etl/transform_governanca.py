@@ -4,6 +4,7 @@ from etl.utils import (
     STAGING_DIR, MUNICIPIOS,
     safe_float as safe_num,
     normalizar_scores, enforce_schema,
+    carregar_populacao_referencia,
 )
 
 N_MUN = len(MUNICIPIOS)
@@ -216,13 +217,10 @@ def main():
     print(f"     Resultados:    {len(resultados)} registos")
 
     print("\n[ 1.2 ] Digital")
-    soc_path = STAGING_DIR / "soc_censos_2021.parquet"
-    if soc_path.exists():
-        df_pop = pd.read_parquet(soc_path)
-        pop_total = df_pop.set_index("codigo_ine")["valor"].to_dict()
-        print(f"     Pop Censos 2021 carregada — {len(pop_total)} municípios")
+    pop_total = carregar_populacao_referencia()
+    if pop_total:
+        print(f"     Pop. residente (ano de referência) carregada — {len(pop_total)} municípios")
     else:
-        pop_total = {}
         print("     ⚠  soc_censos_2021.parquet não encontrado — gov_tv_100hab não será calculado")
         print("        Corre extract_sociedade.py primeiro")
 
