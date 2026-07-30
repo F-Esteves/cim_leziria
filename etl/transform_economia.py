@@ -52,9 +52,6 @@ def calcular_metricas_emprego(df_cens_bruto: pd.DataFrame,
                 "flag_estimado": False,
             })
 
-    # Estrutura setorial — os sectores no ficheiro wide são:
-    # 'primario', 'secundario', 'terciario_social', 'terciario_econ'
-    # Mapeamento → macro-sector para os indicadores
     SETOR_MAP_WIDE = {
         "primario":          "agricultura",
         "secundario":        "industria",
@@ -234,10 +231,6 @@ def calcular_metricas_empresarialidade(df_nasc, df_mort, df_sobr,
       eco_estrutura_vn_agricultura_pct   — VN Agricultura / VN Total × 100
       eco_estrutura_vn_industria_pct     — VN Indústria / VN Total × 100
       eco_estrutura_vn_servicos_pct      — VN Serviços / VN Total × 100
-
-    A partir da nova fonte (INE, CAE Rev.3 detalhado, com Portugal), as
-    métricas de estrutura sectorial passam a ser calculáveis — a fonte
-    anterior só tinha o Total por município, sem desagregação sectorial.
     """
     rows = []
 
@@ -248,10 +241,6 @@ def calcular_metricas_empresarialidade(df_nasc, df_mort, df_sobr,
     # Anos com quebra de série — excluídos do cálculo
     ANOS_EXCLUIR = {2013}
 
-    # Valores absolutos: nascidas e mortas por município e ano
-    # As taxas percentuais foram removidas — o stock total de empresas activas
-    # não está disponível nesta fonte (PORDATA), tornando o denominador incorrecto.
-    # Usam-se valores absolutos directamente comparáveis entre municípios.
     comuns = nasc_idx.index.intersection(mort_idx.index)
     for idx in comuns:
         cod, ano = idx
@@ -321,14 +310,6 @@ def main():
     print("\n=== TRANSFORM · Cluster 5 — Economia ===\n")
 
     pop_total = carregar_populacao_referencia()
-    # A taxa de emprego usa dados do Censos 2021 (numerador fixo — o INE só
-    # atualiza o Censos de 10 em 10 anos, próximo em 2031). Antes dividia-se
-    # por pop_total do ANO_REFERENCIA_POPULACAO (2025) — desfasamento de
-    # anos com o numerador. Agora usa-se a população residente do MESMO
-    # ano (2021), disponível na série anual do INE, para consistência
-    # interna. Continua sem ser "população ativa" a sério (população em
-    # idade de trabalhar / força de trabalho) — é população residente
-    # total, mas ao menos o ano bate certo com o numerador.
     pop_ativa = carregar_populacao_referencia(ano=2021)
     if pop_total:
         print(f"  Pop. residente (INE, ano de referência) — {len(pop_total)} municípios")
@@ -337,11 +318,7 @@ def main():
         print("     Corre extract_sociedade.py primeiro")
 
     print("[ 5.1 ] Emprego e Estrutura")
-    # NOTA: df_co (emprego por conta de outrem) é lido mas NÃO é usado por
-    # calcular_metricas_emprego() — a função só trabalha com df_cens_bruto.
-    # Ficava a mais na chamada (bug pré-existente: função só aceita 2
-    # argumentos). Mantido aqui caso seja para vir a alimentar uma métrica
-    # futura; por agora só serve de leitura sem efeito.
+
     df_co        = pd.read_parquet(STAGING_DIR / "eco_emprego_conta_outrem.parquet")
     df_cens_bruto = pd.read_parquet(STAGING_DIR / "eco_emprego_censos_bruto.parquet")
     metr_emp     = calcular_metricas_emprego(df_cens_bruto, pop_ativa)

@@ -18,7 +18,17 @@ LEZIRIA = list(MUNICIPIOS.keys())   # 11 códigos INE
 
 # ── Parser genérico INE wide (Total / Masculino / Feminino × anos) ────────────
 
-def parse_ine_sexo_wide(path: Path, metrica: str) -> pd.DataFrame:
+def parse_ine_sexo_wide(path: Path, metrica: str, incluir_cim_pt: bool = False) -> pd.DataFrame:
+    """
+    incluir_cim_pt: quando True, inclui também as linhas "NUTS III" / "Lezíria
+    do Tejo" (codigo_ine="1D3") e "Portugal" (codigo_ine="PT"), se existirem
+    no ficheiro. Estas vêm publicadas directamente pela fonte — para
+    contagens absolutas (pessoas, não taxas) a soma dos 11 municípios coincide
+    com o valor da CIM, mas a linha "Portugal" não é derivável a partir dos
+    municípios, e ter "1D3" pronto poupa agregações no Power BI. Default
+    False para não alterar nados_vivos/obitos sem validar se têm as mesmas
+    linhas nos seus ficheiros de origem.
+    """
     df_raw = pd.read_excel(path, header=None)
 
     # Encontrar linha com labels de sexo
@@ -50,10 +60,18 @@ def parse_ine_sexo_wide(path: Path, metrica: str) -> pd.DataFrame:
         if pd.isna(municipio) or str(municipio).strip() == "":
             continue
         municipio_str = str(municipio).strip()
-        codigo = encontrar_codigo(municipio_str)
-        if codigo not in LEZIRIA:
-            continue
-        nome = MUNICIPIOS[codigo]
+        ambito = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+
+        if incluir_cim_pt and ambito == "NUTS III" and "Lezíria do Tejo" in municipio_str:
+            codigo, nome = "1D3", "Lezíria do Tejo"
+        elif incluir_cim_pt and municipio_str == "Portugal":
+            codigo, nome = "PT", "Portugal"
+        else:
+            codigo = encontrar_codigo(municipio_str)
+            if codigo not in LEZIRIA:
+                continue
+            nome = MUNICIPIOS[codigo]
+
         for ci, (sexo, yr) in col_map.items():
             val = row.iloc[ci]
             try:
@@ -100,7 +118,7 @@ def extrair_populacao_estrangeira() -> pd.DataFrame:
     cfg_s = cfg["sociedade"]["pop_estrangeira"]
     path  = RAW_DIR / cfg_s["ficheiro"]
     print(f"  → {path.name}")
-    df = parse_ine_sexo_wide(path, "Pop_estrangeira")
+    df = parse_ine_sexo_wide(path, "Pop_estrangeira", incluir_cim_pt=True)
     df = df[df["sexo"] == "Total"].drop(columns=["sexo"])
     print(f"     {len(df)} registos · {df['codigo_ine'].nunique()} municípios · "
           f"anos {sorted(df['ano'].unique())[:3]}…{sorted(df['ano'].unique())[-1]}")
@@ -217,10 +235,22 @@ def extrair_populacao_residente() -> pd.DataFrame:
         })
 
     df = pd.DataFrame(records)
-    n_mun = df[df["codigo_ine"] != "PT"]["codigo_ine"].nunique()
+
+    # A CIM ("1D3") não vem publicada neste ficheiro (só Portugal + 11
+    # municípios) — ao contrário de outros datasets (veículos, médicos), aqui
+    # é seguro somar os 11 municípios porque população é grandeza aditiva
+    # (confirmado: a soma bate certo com a linha "Lezíria do Tejo" publicada
+    # noutro dataset do mesmo INE, população estrangeira 2023: 18493 = 18493).
+    df_mun = df[df["codigo_ine"] != "PT"]
+    soma_cim = (df_mun.groupby("ano")["valor"].sum().reset_index()
+                .assign(codigo_ine="1D3", municipio="Lezíria do Tejo",
+                        metrica="Pop_residente"))
+    df = pd.concat([df, soma_cim], ignore_index=True)
+
+    n_mun = df[~df["codigo_ine"].isin(["PT", "1D3"])]["codigo_ine"].nunique()
     n_pt  = (df["codigo_ine"] == "PT").sum()
     print(f"     {n_mun} municípios × {sorted(df['ano'].unique())} · "
-          f"{n_pt} registos de Portugal")
+          f"{n_pt} registos de Portugal · CIM (1D3) somada")
     return df
 
 

@@ -60,10 +60,18 @@ def extrair_veiculos() -> pd.DataFrame:
         if not nome_raw or not cod_raw:
             continue
 
-        codigo = extrair_cod_ine(cod_raw)
-        if codigo not in MUNICIPIOS:
-            continue
-        nome = MUNICIPIOS[codigo]
+        # A linha da CIM ("Lezíria do Tejo" / "1D3") vem já publicada pelo
+        # INE neste dataset — não é derivada por nós. encontrar_codigo() só
+        # reconhece "1D3" seguido de 4 dígitos (códigos concelhios), por
+        # isso tratamos este caso à parte em vez de a deixar cair no "não
+        # encontrado" e ser descartada como todos os outros distritos/NUTS.
+        if cod_raw == "1D3":
+            codigo, nome = "1D3", "Lezíria do Tejo"
+        else:
+            codigo = extrair_cod_ine(cod_raw)
+            if codigo not in MUNICIPIOS:
+                continue
+            nome = MUNICIPIOS[codigo]
 
         for i, ano in enumerate(anos):
             base = 2 + i * bloco_cols

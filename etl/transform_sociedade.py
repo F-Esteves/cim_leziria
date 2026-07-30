@@ -55,10 +55,6 @@ def calc_pop_total(stg: dict) -> pd.DataFrame:
 
 
 def calc_taxas_demograficas(stg: dict) -> pd.DataFrame:
-    # Com a série anual (2021-2025) a população passou a variar por ano —
-    # o join tem de ser por (codigo_ine, ano), não só por município, senão
-    # cada nados-vivos/óbito ficaria multiplicado por todos os anos de
-    # população disponíveis (linhas duplicadas).
     pop = (stg["censos_2021"][stg["censos_2021"]["codigo_ine"] != PT_CODIGO]
            [["codigo_ine", "ano", "valor"]]
            .rename(columns={"valor": "pop_2021"}))
@@ -72,9 +68,6 @@ def calc_taxas_demograficas(stg: dict) -> pd.DataFrame:
         on=["codigo_ine", "ano"], how="inner"
     ).rename(columns={"valor": "nados_vivos"})
 
-    # Junta a população do mesmo ano (não a de 2021 fixa como antes) —
-    # para anos sem população anual disponível (ex.: antes de 2021), a
-    # taxa fica NULL em vez de usar um valor desatualizado.
     merged = merged.merge(pop, on=["codigo_ine", "ano"], how="left")
     merged = merged[merged["pop_2021"] > 0]
 
@@ -152,10 +145,6 @@ def calc_densidade(stg: dict) -> pd.DataFrame:
 
 
 def calc_variacao_pop(stg: dict) -> pd.DataFrame:
-    # Métrica fixa "2011_2021" — usa sempre o ano 2021 da série anual, mesmo
-    # que ANO_REFERENCIA_POPULACAO (usado noutros clusters como denominador
-    # per capita) seja outro. Se não houver 2021 na série, não faz sentido
-    # calcular esta métrica com outro ano (o nome ficaria enganador).
     serie_2021 = stg["censos_2021"]
     serie_2021 = serie_2021[(serie_2021["codigo_ine"] != PT_CODIGO) &
                              (serie_2021["ano"] == 2021)]

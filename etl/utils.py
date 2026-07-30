@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -596,6 +597,34 @@ def row_base(
         "metrica_codigo": metrica_codigo,
         "valor":          valor,
     }
+
+
+def formatar_valor_texto(metrica_codigo: str, valor) -> str | None:
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return None
+
+    if re.search(r"_pct(_|$)", metrica_codigo):
+        return f"{valor:.1f}%"
+
+    if metrica_codigo.endswith("_pp"):
+        sinal = "+" if valor > 0 else ""
+        return f"{sinal}{valor:.1f} p.p."
+
+    return None
+
+
+def preencher_valor_texto(df: pd.DataFrame) -> pd.DataFrame:
+
+    if "valor_texto" not in df.columns or df["valor_texto"].isna().all():
+        df["valor_texto"] = df.apply(
+            lambda r: formatar_valor_texto(r["metrica_codigo"], r["valor"]), axis=1
+        )
+    else:
+        mask = df["valor_texto"].isna()
+        df.loc[mask, "valor_texto"] = df.loc[mask].apply(
+            lambda r: formatar_valor_texto(r["metrica_codigo"], r["valor"]), axis=1
+        )
+    return df
 
 
 def normalizar_minmax(series: pd.Series, inverter: bool = False) -> pd.Series:

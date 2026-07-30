@@ -342,7 +342,7 @@ economia:
       ficheiro: "Rendimento-bruto-declarado.xls"
       formato: "xls"
       skiprows: 10
-      anos: [2018, 2019, 2020, 2021, 2022, 2023]
+      anos: [2022, 2023, 2024]
       unidade: "k€"
       notas: "Rendimento bruto total declarado (AT); ×1000/pop → per capita"
 
@@ -350,7 +350,7 @@ economia:
       ficheiro: "Imposto-sobre-o-rendimento-de-pessoas-singulares-liquidado.xls"
       formato: "xls"
       skiprows: 10
-      anos: [2018, 2019, 2020, 2021, 2022, 2023]
+      anos: [2022, 2023, 2024]
       unidade: "k€"
       notas: "IRS total liquidado (AT); usado também para taxa de esforço fiscal"
 
@@ -358,7 +358,7 @@ economia:
       ficheiro: "Poder-de-compra-per-capita.xlsx"
       formato: "xlsx"
       skiprows: 11               # padrão PORDATA
-      anos: [1993, 1995, 2000, 2002, 2004, 2006, 2008, 2010, 2012, 2014, 2016, 2017, 2019, 2021, 2023]
+      anos: [2013, 2015, 2017, 2019, 2021, 2023]
       unidade: "índice (base 100 = PT)"
       notas: "Bienal; valor directo do dataset — índice de poder de compra per capita"
 

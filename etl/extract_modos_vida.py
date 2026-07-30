@@ -15,7 +15,6 @@ RAW_DIR = Path(cfg["raw_dir"])
 
 
 def ano_limpo(v) -> int | None:
-    """Normaliza anos com prefixo '┴ ' para inteiro."""
     try:
         return int(str(v).replace("┴", "").strip())
     except (ValueError, TypeError):
@@ -25,7 +24,8 @@ def ano_limpo(v) -> int | None:
 # ── Leitura PORDATA com múltiplos blocos de métricas ──────────
 
 def ler_pordata_multi(path: Path, skiprows: int, metricas: list[str],
-                      anos_cfg: list[int] | None = None) -> pd.DataFrame:
+                      anos_cfg: list[int] | None = None,
+                      incluir_cim: bool = False) -> pd.DataFrame:
 
     df_raw = pd.read_excel(path, skiprows=skiprows, header=0)
     df_raw.columns = [str(c).strip() for c in df_raw.columns]
@@ -33,10 +33,20 @@ def ler_pordata_multi(path: Path, skiprows: int, metricas: list[str],
     col_tipo = df_raw.columns[0]
     col_nome = df_raw.columns[1]
 
-    # Filtrar só linhas de município
-    df_raw = df_raw[df_raw[col_tipo].astype(str).str.strip() == "Município"].copy()
+    # Filtrar linhas de município (+ opcionalmente a linha CIM/NUTS III)
+    tipos_aceites = ["Município"]
+    if incluir_cim:
+        tipos_aceites.append("NUTS III")
+    df_raw = df_raw[df_raw[col_tipo].astype(str).str.strip().isin(tipos_aceites)].copy()
     df_raw = df_raw.dropna(subset=[col_nome])
-    df_raw["codigo_ine"] = df_raw[col_nome].apply(extrair_cod_ine)
+
+    def cod_linha(row):
+        if incluir_cim and str(row[col_tipo]).strip() == "NUTS III" \
+                and "Lezíria do Tejo" in str(row[col_nome]):
+            return "1D3"
+        return extrair_cod_ine(row[col_nome])
+
+    df_raw["codigo_ine"] = df_raw.apply(cod_linha, axis=1)
     df_filt = df_raw[df_raw["codigo_ine"].notna()].copy()
 
     if df_filt.empty:
@@ -83,7 +93,7 @@ def extrair_hab_medico() -> pd.DataFrame:
     print(f"  → Lendo {path.name}")
     df = ler_pordata_multi(path, cfg_s["skiprows"],
                            ["hab_medico", "hab_farmaceutico"],
-                           cfg_s.get("anos"))
+                           cfg_s.get("anos"), incluir_cim=True)
     print(f"     {len(df)} registos · {df['codigo_ine'].nunique()} municípios · métricas {df['metrica'].unique().tolist()}")
     return df
 
@@ -234,8 +244,6 @@ def extrair_criminalidade() -> pd.DataFrame:
         if cod is None:
             continue
 
-        # As colunas de dados estão nas posições ímpares: 1, 3, 5, ...
-        # Estrutura: [mun, val_2024_t, NaN, val_2024_cat1, NaN, ..., val_2023_t, NaN, ...]
         data_vals = [v for v in df_raw.iloc[i, 1:].tolist() if pd.notna(v)]
 
         for j, ano in enumerate(anos):
@@ -261,26 +269,13 @@ def extrair_criminalidade() -> pd.DataFrame:
 
 # ── 4.3 Educação ──────────────────────────────────────────────
 
-# ── Helpers para os novos ficheiros INE (1 ano, 2 categorias, com Portugal) ────
-
 def _valor_ine(v):
-    """Na fonte INE, '-' significa zero/não aplicável (ex.: município sem
-    ensino superior) — não é dado em falta. NaN mantém-se NaN."""
     if isinstance(v, str) and v.strip() == "-":
         return 0.0
     return safe_float(v)
 
 
 def _valor_ine_shifted(row, col: int):
-    """
-    Lê um valor INE na posição 'col', com tolerância a um desvio de coluna
-    observado nestes ficheiros: quando o valor é numérico, fica em 'col';
-    quando é o marcador '-' (zero/não aplicável), o INE por vezes coloca-o
-    em 'col+1' em vez de 'col' (a célula 'col' fica NaN nesse caso — efeito
-    de célula combinada/merge no ficheiro original). Sem isto, esses casos
-    seriam lidos como "sem dados" e a linha toda seria descartada, quando
-    na realidade é um zero legítimo.
-    """
     if col >= len(row):
         return None
     primario = _valor_ine(row.iloc[col])
@@ -294,8 +289,6 @@ def _valor_ine_shifted(row, col: int):
 
 
 def _linha_codigo_nome(nome_raw: str, cod_raw: str):
-    """Devolve (codigo_ine, nome) — 'PT' para Portugal, None se não for
-    município da CIM nem Portugal."""
     if cod_raw == "PT" or nome_raw == "Portugal":
         return "PT", "Portugal"
     codigo = extrair_cod_ine(cod_raw)
@@ -305,16 +298,6 @@ def _linha_codigo_nome(nome_raw: str, cod_raw: str):
 
 
 def extrair_ensino_superior_inscritos() -> pd.DataFrame:
-    """
-    Alunos inscritos no ensino superior — quase todos os municípios da CIM
-    não têm instituições de ensino superior (fica a '0' via '-' do INE);
-    só Rio Maior e Santarém têm valores reais. Inclui Portugal.
-
-    5 anos letivos em blocos HORIZONTAIS (não verticais como noutros
-    ficheiros de educação): cada bloco tem 2 categorias (Portuguesa,
-    Estrangeira) × 2 colunas (valor + coluna vazia) = 4 colunas por ano,
-    nos offsets 2, 6, 10, 14, 18 a partir da coluna 2.
-    """
     cfg_s  = cfg["modos_vida"]["educacao"]["ensino_superior_inscritos"]
     path   = RAW_DIR / cfg_s["ficheiro"]
     engine = "xlrd" if str(path).endswith(".xls") else None
@@ -358,16 +341,6 @@ def extrair_ensino_superior_inscritos() -> pd.DataFrame:
 
 
 def extrair_ensino_nao_superior() -> pd.DataFrame:
-    """
-    Alunos matriculados no ensino não superior — 6 níveis (pré-escolar,
-    básico 1º/2º/3º ciclo, secundário, pós-secundário) × Público/Privado.
-    Guarda o total por nível e o total geral. Inclui Portugal.
-
-    O ficheiro tem VÁRIOS anos escolares em blocos verticais (12 linhas
-    cada: Portugal + 11 municípios), por isso seguimos o ano corrente a
-    partir da coluna 0 (só preenchida na 1ª linha de cada bloco) — o
-    mesmo padrão usado em extrair_populacao_residente().
-    """
     cfg_s  = cfg["modos_vida"]["educacao"]["ensino_nao_superior_matriculados"]
     path   = RAW_DIR / cfg_s["ficheiro"]
     engine = "xlrd" if str(path).endswith(".xls") else None
@@ -408,9 +381,6 @@ def extrair_ensino_nao_superior() -> pd.DataFrame:
             if base >= len(row):
                 continue
             linha_valida = True
-            # NaN aqui = zero implícito (ex.: sem oferta privada nesse nível,
-            # ou sem pós-secundário no município) — mesma convenção do "-"
-            # usado noutros ficheiros INE, só que codificada em branco.
             subtotal = (publico or 0) + (privado or 0)
             total_geral += subtotal
             rows.append({
@@ -651,9 +621,6 @@ def extrair_alojamentos() -> pd.DataFrame:
     df_raw = pd.read_csv(path, sep=";", encoding="utf-8", header=0)
     col_geo = df_raw.columns[0]
 
-    # Mapear colunas por posição (confirmado: col1=Total, col2=Familiares clássicos,
-    # col3=Fam. não clássicos, col4=Familiares ocup. residência habitual,
-    # col5=Familiares ocup. uso sazonal, col6=Familiares vagos, col7=Coletivos)
     col_map = {
         "alojamentos_total":          df_raw.columns[1],
         "alojamentos_familares":      df_raw.columns[2],

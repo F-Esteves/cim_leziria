@@ -3,7 +3,7 @@ import pandas as pd
 from etl.utils import (
     STAGING_DIR,
     row_base,
-    normalizar_scores, enforce_schema,
+    normalizar_scores, enforce_schema, preencher_valor_texto,
     carregar_populacao_referencia,
 )
 
@@ -58,8 +58,55 @@ def transform_veiculos() -> pd.DataFrame:
                                      "mob_evolucao_veiculos_pp", round(evolucao, 4)))
 
     df_metr = pd.DataFrame(rows)
+
+    # Adicionar: % do total CIM por tipo de veículo
+    # Para cada ano e tipo, calcula cada município como % do total CIM
+    df_metr = pd.concat([df_metr, calcular_veiculos_pct_cim(df)], ignore_index=True)
+
     print(f"     {len(df_metr)} registos · {df_metr['metrica_codigo'].nunique()} métricas")
     return df_metr
+
+
+def calcular_veiculos_pct_cim(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calcula cada município como % do total CIM para registos de veículos.
+    Permite gráfico de colunas agrupadas onde soma = 100% por ano e tipo.
+
+    Ex: Santarém 150 registos, CIM total 1000 → Santarém 15%
+    """
+    tipo_metrica_pct = {
+        "total":    "mob_registo_total_pct_cim",
+        "ligeiros": "mob_registo_ligeiros_pct_cim",
+        "pesados":  "mob_registo_pesados_pct_cim",
+        "tratores": "mob_registo_tratores_pct_cim",
+    }
+
+    rows = []
+
+    for ano in df["ano"].unique():
+        for tipo in ["total", "ligeiros", "pesados", "tratores"]:
+            df_ano_tipo = df[
+                (df["ano"] == ano) &
+                (df["tipo"] == tipo)
+            ]
+
+            cim_total = df_ano_tipo["valor"].sum()
+
+            if cim_total > 0:
+                for _, row in df_ano_tipo.iterrows():
+                    pct = (row["valor"] / cim_total) * 100
+                    metrica_pct = tipo_metrica_pct[tipo]
+
+                    rows.append(row_base(
+                        row["codigo_ine"],
+                        row["nome"],
+                        int(row["ano"]),
+                        metrica_pct,
+                        round(pct, 2)
+                    ))
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["codigo_ine", "nome", "ano", "metrica_codigo", "valor"])
 
 
 # ── 3.2 Pontos de Carregamento VE ─────────────────────────────
@@ -163,9 +210,9 @@ def main():
         metricas_inverter=_METRICAS_INVERTER,
         metricas_sem_normalizacao=_METRICAS_SEM_NORMALIZACAO,
     )
+    df_all = preencher_valor_texto(df_all)
     df_all = enforce_schema(df_all)
 
-    df_all["valor_texto"] = None
     df_all["categoria"]   = None
 
     df_all.to_parquet(STAGING_DIR / "mob_transformed.parquet", index=False)

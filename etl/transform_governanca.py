@@ -45,6 +45,45 @@ def calcular_metricas_eleicoes(df: pd.DataFrame, sufixo: str) -> pd.DataFrame:
 
 
 
+def calcular_agregado_eleicoes_cim(df_raw: pd.DataFrame, sufixo: str) -> pd.DataFrame:
+    """
+    Calcula abstenção e participação CORRETAS para a CIM Lezíria do Tejo
+    como (total votantes / total eleitores) por ano.
+    Adiciona registo com codigo_ine="1D3" (código INE da CIM).
+    """
+    rows = []
+    
+    for ano in df_raw["ano"].unique():
+        df_ano = df_raw[df_raw["ano"] == ano]
+        
+        # Somar os valores brutos (eleitores e votantes/abstenções)
+        total_eleitores = df_ano["eleitores"].sum()
+        total_votantes = df_ano["votantes"].sum()
+        total_abstencoes = df_ano["abstencao"].sum()
+        
+        if total_eleitores > 0:
+            abst_pct = round(total_abstencoes / total_eleitores * 100, 2)
+            part_pct = round(total_votantes / total_eleitores * 100, 2)
+            
+            rows.append({
+                "codigo_ine":     "1D3",
+                "nome":           "Lezíria do Tejo",
+                "ano":            ano,
+                "metrica_codigo": f"gov_abstencao_{sufixo}_pct",
+                "valor":          abst_pct,
+            })
+            rows.append({
+                "codigo_ine":     "1D3",
+                "nome":           "Lezíria do Tejo",
+                "ano":            ano,
+                "metrica_codigo": f"gov_participacao_{sufixo}_pct",
+                "valor":          part_pct,
+            })
+    
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["codigo_ine", "nome", "ano", "metrica_codigo", "valor"])
+
+
 def calcular_evolucao_abstencao(df_ar: pd.DataFrame) -> pd.DataFrame:
     """Evolução abstenção AR: último ano disponível - primeiro ano disponível."""
     rows = []
@@ -207,6 +246,12 @@ def main():
     metr_ar    = calcular_metricas_eleicoes(df_ar,   "ar")
     metr_aut   = calcular_metricas_eleicoes(df_aut,  "aut")
     metr_pres  = calcular_metricas_eleicoes(df_pres, "pres")
+    
+    # Agregar correctamente para a CIM (código_ine = "PT")
+    agg_ar     = calcular_agregado_eleicoes_cim(df_ar,   "ar")
+    agg_aut    = calcular_agregado_eleicoes_cim(df_aut,  "aut")
+    agg_pres   = calcular_agregado_eleicoes_cim(df_pres, "pres")
+    
     evolucao   = calcular_evolucao_abstencao(metr_ar)
     resultados = calcular_metricas_resultados(df_result)
 
@@ -230,7 +275,7 @@ def main():
     digital = calcular_metricas_digital(df_bl, df_tel, df_tv, pop_total)
     print(f"     Digital: {len(digital)} registos")
 
-    df_numericas = pd.concat([metr_ar, metr_aut, metr_pres, evolucao, digital],
+    df_numericas = pd.concat([metr_ar, metr_aut, metr_pres, agg_ar, agg_aut, agg_pres, evolucao, digital],
                              ignore_index=True)
 
     for col in ("valor_texto", "categoria"):

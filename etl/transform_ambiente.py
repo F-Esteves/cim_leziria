@@ -2,7 +2,7 @@ import pandas as pd
 
 from etl.utils import (
     STAGING_DIR, PT_CODIGO,
-    row_base, normalizar_scores, enforce_schema,
+    row_base, normalizar_scores, enforce_schema, preencher_valor_texto,
     carregar_populacao_serie,
 )
 
@@ -23,6 +23,12 @@ def transform_consumos() -> pd.DataFrame:
 
     TENSAO_BT = "Baixa Tensão"
     TENSAO_AT = "Muito Alta, Alta e Média Tensões"
+
+    # Série de população por (codigo_ine, ano), mesmo padrão usado em resíduos —
+    # cada ano usa a população desse ano, nunca um ano de referência fixo.
+    pop_serie = carregar_populacao_serie(incluir_pt=False)
+    if not pop_serie:
+        print("     ⚠  soc_censos_2021.parquet não encontrado — amb_consumo_*_1k_hab não será calculado")
 
     rows = []
 
@@ -55,6 +61,18 @@ def transform_consumos() -> pd.DataFrame:
             rows.append(row_base(cod, nome, ano, "amb_consumo_bt_kwh",    round(bt, 0)))
             rows.append(row_base(cod, nome, ano, "amb_consumo_at_kwh",    round(at, 0)))
             rows.append(row_base(cod, nome, ano, "amb_pct_consumo_bt",    round(bt / total * 100, 2)))
+
+            # Normalização por 1000 habitantes — comparação justa entre municípios
+            pop = pop_serie.get((cod, ano))
+            if pop and pop > 0:
+                rows.append(row_base(cod, nome, ano, "amb_consumo_total_1k_hab",
+                                     round(total / pop * 1000, 2)))
+                rows.append(row_base(cod, nome, ano, "amb_consumo_bt_1k_hab",
+                                     round(bt / pop * 1000, 2)))
+                rows.append(row_base(cod, nome, ano, "amb_consumo_at_1k_hab",
+                                     round(at / pop * 1000, 2)))
+
+    rows.extend(calcular_agregado_consumo_cim(pivot, pop_serie, bt_col, at_col))
 
     df_metr = pd.DataFrame(rows)
     totais_ano = df_metr[df_metr["metrica_codigo"] == "amb_consumo_total_kwh"].copy()
@@ -94,6 +112,29 @@ def transform_consumos() -> pd.DataFrame:
 
     print(f"     {len(df_metr)} registos · {df_metr['metrica_codigo'].nunique()} métricas")
     return df_metr
+
+
+def calcular_agregado_consumo_cim(pivot: pd.DataFrame, pop_serie: dict, bt_col, at_col) -> list[dict]:
+    rows = []
+    for ano in sorted(pivot["ano"].unique()):
+        if ano in ANOS_INCOMPLETOS:
+            continue
+        df_ano = pivot[pivot["ano"] == ano]
+
+        total_bt  = float(df_ano[bt_col].sum())  if bt_col else 0.0
+        total_at  = float(df_ano[at_col].sum())  if at_col else 0.0
+        total_cim = total_bt + total_at
+
+        pop_cim = sum(pop_serie.get((cod, ano), 0) for cod in df_ano["codigo_ine"].unique())
+
+        if total_cim > 0 and pop_cim > 0:
+            rows.append(row_base("1D3", "Lezíria do Tejo", ano, "amb_consumo_total_1k_hab",
+                                 round(total_cim / pop_cim * 1000, 2)))
+            rows.append(row_base("1D3", "Lezíria do Tejo", ano, "amb_consumo_bt_1k_hab",
+                                 round(total_bt / pop_cim * 1000, 2)))
+            rows.append(row_base("1D3", "Lezíria do Tejo", ano, "amb_consumo_at_1k_hab",
+                                 round(total_at / pop_cim * 1000, 2)))
+    return rows
 
 
 # ── 2.1 Energia — Contadores ───────────────────────────────────
@@ -172,9 +213,6 @@ def transform_residuos() -> pd.DataFrame:
     print("  → Transformando resíduos APA")
     df = pd.read_parquet(STAGING_DIR / "amb_residuos.parquet")
 
-    # Série completa (município + Portugal) casada por ano — os resíduos são
-    # multi-ano (2021-2024) e a população também, por isso o per capita usa
-    # sempre a população do MESMO ano, nunca um ano de referência fixo.
     pop_serie = carregar_populacao_serie(incluir_pt=True)
     if not pop_serie:
         print("     ⚠  soc_censos_2021.parquet não encontrado — amb_residuos_per_capita não será calculado")
@@ -259,10 +297,10 @@ def main():
         ignore_index=True,
     )
     df_all = normalizar_scores(df_all, metricas_inverter=_METRICAS_INVERTER)
+    df_all = preencher_valor_texto(df_all)
     df_all = enforce_schema(df_all)
 
     # Alinhar schema com Governança (referência)
-    df_all["valor_texto"] = None
     df_all["categoria"]   = None
 
     df_all.to_parquet(STAGING_DIR / "amb_transformed.parquet", index=False)

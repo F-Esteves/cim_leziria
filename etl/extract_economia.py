@@ -14,11 +14,20 @@ with open("config/sources.yaml", encoding="utf-8") as f:
 RAW_DIR = Path(cfg["raw_dir"])
 
 def ler_ine_pares_anos(path: Path, anos: list[int]) -> pd.DataFrame:
-    """INE: col0=geo, cols ímpares (1,3,5...) = valores por ano."""
+ 
     df_raw = pd.read_excel(path, sheet_name=0, skiprows=0, header=None)
     df_dados = df_raw.iloc[9:].copy()
-    cols_val = [1 + 2*i for i in range(len(anos))]
-    df = df_dados[[0] + cols_val].copy()
+
+    primeira_col1 = str(df_dados.iloc[0, 1]).strip()
+    layout_novo = bool(re.fullmatch(r"1D3\d{4}", primeira_col1))
+
+    if layout_novo:
+        col_codigo, col_ini_valores = 1, 2
+    else:
+        col_codigo, col_ini_valores = 0, 1
+
+    cols_val = [col_ini_valores + 2*i for i in range(len(anos))]
+    df = df_dados[[col_codigo] + cols_val].copy()
     df.columns = ["geo"] + anos
     df["codigo_ine"] = df["geo"].apply(encontrar_codigo)
     df = df[df["codigo_ine"].notna()].copy()
@@ -29,16 +38,27 @@ def ler_ine_pares_anos(path: Path, anos: list[int]) -> pd.DataFrame:
     df_long["valor"] = df_long["valor"].apply(safe_float)
     return df_long.dropna(subset=["valor"]).reset_index(drop=True)
 
-def ler_pordata_transposto(path: Path, nome_serie: str) -> pd.DataFrame:
-    """PORDATA: sheet Quadro, skiprows=11, anos em colunas."""
+def ler_pordata_transposto(path: Path, nome_serie: str, incluir_cim: bool = False) -> pd.DataFrame:
+  
     df_raw = pd.read_excel(path, sheet_name="Quadro", skiprows=11, header=0)
     df_raw.columns = [str(c).strip() for c in df_raw.columns]
     col_tipo = df_raw.columns[0]
     col_mun  = df_raw.columns[1]
-    df_raw = df_raw[df_raw[col_tipo].astype(str).str.strip() == "Município"].copy()
+
+    tipos_aceites = ["Município"]
+    if incluir_cim:
+        tipos_aceites.append("NUTS III")
+    df_raw = df_raw[df_raw[col_tipo].astype(str).str.strip().isin(tipos_aceites)].copy()
     df_raw = df_raw.dropna(subset=[col_mun])
     df_raw[col_mun] = df_raw[col_mun].astype(str).str.strip()
-    df_raw["codigo_ine"] = df_raw[col_mun].apply(encontrar_codigo)
+
+    def cod_linha(row):
+        if incluir_cim and str(row[col_tipo]).strip() == "NUTS III" \
+                and "Lezíria do Tejo" in str(row[col_mun]):
+            return "1D3"
+        return encontrar_codigo(row[col_mun])
+
+    df_raw["codigo_ine"] = df_raw.apply(cod_linha, axis=1)
     df_filt = df_raw[df_raw["codigo_ine"].notna()].copy()
     anos_cols = [c for c in df_raw.columns if re.fullmatch(r"\d{4}", str(c))]
     rows = []
@@ -65,11 +85,7 @@ def extrair_emprego_conta_outrem() -> pd.DataFrame:
     print(f" → {path.name}")
     df_raw = pd.read_excel(path, sheet_name=0, skiprows=0, header=None)
 
-    # Identificar linha de dados (col[0] contém "1D3")
-    # NOTA: usa-se str(v) em cada elemento, não .astype(str) em bloco —
-    # no pandas 2.x/3.x com dtype "string" (StringDtype), astype(str)
-    # pode preservar NaN como float em vez de o converter à string "nan",
-    # o que faz o re.search() seguinte rebentar com TypeError.
+
     data_start = next(
         (i for i, v in enumerate(df_raw.iloc[:, 0])
          if re.search(r"1D3\d{4}", str(v))), None
@@ -196,7 +212,7 @@ def extrair_poder_compra_per_capita() -> pd.DataFrame:
     cfg_pc = cfg["economia"]["rendimento"]["poder_compra_per_capita"]
     path   = RAW_DIR / cfg_pc["ficheiro"]
     print(f" → {path.name}")
-    return ler_pordata_transposto(path, "IPC per capita")
+    return ler_pordata_transposto(path, "IPC per capita", incluir_cim=True)
 
 def extrair_proporcao_poder_compra() -> pd.DataFrame:
     cfg_pr = cfg["economia"]["rendimento"]["proporcao_poder_compra"]
