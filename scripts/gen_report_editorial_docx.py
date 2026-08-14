@@ -10,7 +10,6 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-from PIL import Image
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CHARTS = BASE_DIR / "reports" / "charts_standalone"
@@ -98,11 +97,7 @@ def bloco_simples(titulo, chave_imagem, chave_narrativa, opts=None):
         p.paragraph_format.space_after = Pt(6)
 
     img_path = CHARTS / f"{chave_imagem}.png"
-    with Image.open(img_path) as im:
-        img_w, img_h = im.size
-
     width_px = opts.get("width", 400)
-    height_px = round(width_px * (img_h / img_w))
     width_cm = Cm(width_px / 96 * 2.54)
 
     p_img = doc.add_paragraph()
@@ -261,9 +256,9 @@ bloco_simples("Carregamento Privado vs Público", "mob_05_privado_publico", "mob
 titulo_seccao("4. MODOS DE VIDA")
 sub_titulo("Saúde")
 bloco_simples("Habitantes por Médico", "mdv_01_mapa_hab_medico", "mdv_01", {"semEspacoAntes": True, "width": 360})
-bloco_simples("Profissionais de Saúde no Município", "mdv_02_kpis_profissionais", "mdv_02", {"width": 480})
+bloco_simples("Profissionais de Saúde no Município", "mdv_02_kpis_profissionais", "mdv_02", {"width": 600})
 bloco_simples("Utentes Inscritos no CSP", "mdv_03_kpi_utentes", "mdv_03", {"width": 220})
-bloco_simples("Habitantes por Farmacêuticos e Médicos", "mdv_04_hab_farmaceuticos_medicos", "mdv_04", {"width": 480})
+bloco_simples("Habitantes por Farmacêuticos e Médicos", "mdv_04_hab_farmaceuticos_medicos", "mdv_04", {"width": 600})
 bloco_simples("Consultas nos Cuidados de Saúde Primários", "mdv_05_consultas_csp", "mdv_05")
 
 sub_titulo("Segurança")
