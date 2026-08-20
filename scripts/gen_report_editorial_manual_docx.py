@@ -19,9 +19,6 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 with open(CHARTS / "narrativas.json", encoding="utf-8") as f:
     narrativas = json.load(f)
 
-resumo_path = CHARTS / "resumo_indicadores.json"
-resumo_indicadores = json.loads(resumo_path.read_text(encoding="utf-8")) if resumo_path.exists() else []
-
 with open(CHARTS / "tabela_municipios.json", encoding="utf-8") as f:
     tabela_dados = json.load(f)
 
@@ -143,117 +140,6 @@ def tabela_municipios():
     return table
 
 
-def tabela_resumo():
-    """Tabela-síntese tipo 'semáforo': mostra, para cada indicador selecionado,
-    a tendência (▲ aumento / ▼ diminuição / ● estável) e o cumprimento da meta
-    (quando existe). Os dados vêm todos de resumo_indicadores.json, gerado
-    automaticamente a partir da mesma classificação (narrativa_engine.
-    avaliar_indicador) que produz o texto do relatório — não há aqui nenhuma
-    avaliação feita à mão.
-
-    A cor é aplicada só às colunas "Tendência" e "Meta" (não à linha inteira),
-    de propósito: são dois sinais independentes — um indicador pode ter uma
-    tendência positiva e ainda assim não cumprir a meta (ou vice-versa).
-    Colorir a linha toda obrigaria a escolher um veredito único mesmo quando
-    os dois sinais dizem coisas diferentes, escondendo informação real.
-    """
-    if not resumo_indicadores:
-        return
-
-    doc.add_page_break()
-
-    VERDE = ("E2F0D9", "375623")
-    VERMELHO = ("FCE4E4", "8B0000")
-    CINZA = ("F2F2F2", "595959")
-    SETAS = {"aumento": "▲", "diminuicao": "▼", "estabilidade": "●", "sem_comparacao": "—"}
-
-    doc.add_heading("Síntese dos Indicadores", level=1)
-    p = doc.add_paragraph(
-        "Classificação automática da tendência e do cumprimento de metas para um conjunto de indicadores "
-        "representativo de cada domínio, gerada a partir das mesmas regras (narrativa_engine.py) que produzem "
-        "o texto do relatório — não há aqui avaliação qualitativa feita manualmente."
-    )
-    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    p.paragraph_format.space_after = Pt(6)
-    for run in p.runs:
-        run.font.size = Pt(10)
-
-    table = doc.add_table(rows=1, cols=5)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    widths = (Cm(2.6), Cm(6.0), Cm(2.6), Cm(2.2), Cm(2.9))
-    headers = ["Domínio", "Indicador", "Valor Atual", "Tendência", "Meta"]
-
-    header_cells = table.rows[0].cells
-    for i, (texto, w) in enumerate(zip(headers, widths)):
-        header_cells[i].width = w
-        header_cells[i].text = texto
-        for run in header_cells[i].paragraphs[0].runs:
-            run.font.bold = True
-            run.font.size = Pt(11)
-            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        _shading_celula(header_cells[i], "1F4E79")
-
-    for item in resumo_indicadores:
-        row = table.add_row().cells
-        for cel, w in zip(row, widths):
-            cel.width = w
-
-        row[0].text = item["cluster"]
-        row[1].text = item["nome"]
-
-        valor_fmt = f'{item["valor_atual"]:,.1f}'.replace(",", " ").rstrip("0").rstrip(".")
-        row[2].text = f'{valor_fmt}{item["unidade"]}'
-        row[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-        # Coluna Tendência: cor consoante a tendência em si for boa ou má
-        # notícia (independente da meta). Estabilidade/sem-comparação/sem
-        # direção definida ficam neutras (cinza) — não há "sinal" a dar.
-        situacao = item["situacao"]
-        direcao_boa = item.get("config", {}).get("direcao_boa")
-        row[3].text = SETAS.get(situacao, "—")
-        row[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        if situacao in ("aumento", "diminuicao") and direcao_boa:
-            cor_tendencia = VERDE if situacao == direcao_boa else VERMELHO
-        else:
-            cor_tendencia = CINZA
-        _shading_celula(row[3], cor_tendencia[0])
-        for run in row[3].paragraphs[0].runs:
-            run.font.color.rgb = RGBColor.from_string(cor_tendencia[1])
-
-        # Coluna Meta: cor consoante cumpre/não cumpre, independente da
-        # tendência. Sem meta definida fica neutra (cinza).
-        situacao_meta = item.get("situacao_meta")
-        if situacao_meta == "cumprimento":
-            row[4].text = "✓ Cumpre"
-            cor_meta = VERDE
-        elif situacao_meta == "incumprimento":
-            row[4].text = "✗ Não cumpre"
-            cor_meta = VERMELHO
-        else:
-            row[4].text = "— (sem meta)"
-            cor_meta = CINZA
-        row[4].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        _shading_celula(row[4], cor_meta[0])
-        for run in row[4].paragraphs[0].runs:
-            run.font.color.rgb = RGBColor.from_string(cor_meta[1])
-
-        for cel in row:
-            for run in cel.paragraphs[0].runs:
-                if run.font.size is None:
-                    run.font.size = Pt(10.5)
-            cel.paragraphs[0].paragraph_format.space_before = Pt(5)
-            cel.paragraphs[0].paragraph_format.space_after = Pt(5)
-
-    p_legenda = doc.add_paragraph(
-        "Legenda: ▲ aumento · ▼ diminuição · ● estável · — sem comparação disponível. Verde = sinal positivo "
-        "· Vermelho = sinal negativo · Cinza = neutro/informativo (sem direção boa/má definida, ou sem meta "
-        "aplicável). Tendência e Meta são avaliadas de forma independente uma da outra."
-    )
-    p_legenda.paragraph_format.space_before = Pt(6)
-    p_legenda.runs[0].font.size = Pt(9)
-    p_legenda.runs[0].font.color.rgb = RGBColor(0x76, 0x76, 0x76)
-
-
 def indice_visual():
     doc.add_page_break()
     doc.add_heading("Índice", level=1)
@@ -316,7 +202,6 @@ p_intro.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
 doc.add_heading(f'Os 11 municípios da CIM ({tabela_dados["ano"]})', level=3)
 tabela_municipios()
-tabela_resumo()
 indice_visual()
 
 # ═══════════ 1. GOVERNANÇA ═══════════
@@ -414,11 +299,8 @@ bloco_simples("Densidade Populacional", "soc_03_mapa_densidade", "soc_03", {"wid
 bloco_simples("Variação Populacional por Município", "soc_04_variacao_populacional", "soc_04")
 bloco_simples("População Estrangeira", "soc_05_mapa_populacao_estrangeira", "soc_05", {"width": 360})
 bloco_simples("Evolução da População Estrangeira", "soc_06_evolucao_pop_estrangeira", "soc_06")
-bloco_simples("População Estrangeira por Município", "soc_06b_ranking_pop_estrangeira", "soc_06b")
 bloco_simples("Saldo Natural", "soc_07_saldo_natural", "soc_07")
-bloco_simples("Saldo Natural por Município", "soc_07b_ranking_saldo_natural", "soc_07b")
 bloco_simples("Natalidade e Mortalidade", "soc_08_natalidade_mortalidade", "soc_08")
-bloco_simples("Natalidade e Mortalidade por Município", "soc_08b_ranking_natalidade_mortalidade", "soc_08b", {"width": 560})
 
 # ── Guarda o .docx ──
 out_docx = OUT_DIR / "Dashboard_CIM_Leziria_Editorial.docx"
