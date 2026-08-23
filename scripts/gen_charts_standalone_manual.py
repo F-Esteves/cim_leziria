@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STAGING = BASE_DIR / "data" / "staging"
-OUT = BASE_DIR / "reports" / "charts_standalone"
+OUT = BASE_DIR / "reports" / "charts_standalone_manual"
 GEOJSON = BASE_DIR / "data" / "ContinenteConcelhos.geojson"
 MUNICIPIO_REF = "Santarém"
 
@@ -158,6 +158,21 @@ def barh_fig(labels, valores, color, title="", fmt="{:.0f}", figsize=(7, 4.6)):
     return fig, ax
 
 
+def _limites_eixo(valores_o, extra=None, frac=0.18):
+    """Calcula limites do eixo X com margem proporcional ao INTERVALO dos
+    dados, em vez de multiplicar o valor máximo por uma constante (ex.:
+    xmax = max(valores)*1.2) — essa conta inverte-se quando os valores são
+    negativos (ex.: -34*1.22 = -41.5, que é MENOR que -34, cortando a barra
+    em vez de lhe dar margem). Funciona com qualquer combinação de sinais."""
+    todos = list(valores_o) + ([extra] if extra is not None else [])
+    lo, hi = min(todos), max(todos)
+    rng = (hi - lo) if hi != lo else (abs(hi) if hi != 0 else 1)
+    pad = rng * frac
+    xmin = min(0, lo - pad * 0.3)
+    xmax = hi + pad
+    return xmin, xmax
+
+
 def barh_ref_fig(labels, valores, cim_valor, color, title="", fmt="{:.0f}", figsize=(7, 4.8), cim_label="Lezíria do Tejo"):
     """Ranking horizontal dos 11 municípios + linha vertical tracejada com a referência da CIM."""
     fig, ax = plt.subplots(figsize=figsize)
@@ -169,12 +184,9 @@ def barh_ref_fig(labels, valores, cim_valor, color, title="", fmt="{:.0f}", figs
         ax.annotate(fmt.format(v), (b.get_width(), b.get_y() + b.get_height()/2),
                     textcoords="offset points", xytext=(5, 0), va="center", fontsize=9)
     ax.axvline(cim_valor, color="#333333", linestyle="--", linewidth=1.8, zorder=5)
-    xmax = max(max(valores_o), cim_valor) * 1.18
-    ax.set_xlim(min(0, min(valores_o) * 1.1), xmax)
-    ax.annotate(f"{cim_label}: {fmt.format(cim_valor)}", (cim_valor, len(labels_o) - 1 + 0.55),
-                ha="center", va="bottom", fontsize=8.5, color="#333333", fontweight="bold",
-                annotation_clip=False)
-    ax.set_title(title, fontsize=12, fontweight="bold", pad=22)
+    xmin, xmax = _limites_eixo(valores_o, extra=cim_valor, frac=0.18)
+    ax.set_xlim(xmin, xmax)
+    ax.set_title(f"{title}  ·  {cim_label}: {fmt.format(cim_valor)}", fontsize=11.5, fontweight="bold", pad=10)
     return fig, ax
 
 
@@ -201,11 +213,12 @@ def barh_ref_grid_fig(paineis, ncols=2, figsize=(11, 8.5), cim_label="CIM", most
             ax.annotate(fmt.format(v), (b.get_width(), b.get_y() + b.get_height()/2),
                         textcoords="offset points", xytext=(5, 0), va="center", fontsize=9.5,
                         zorder=4, bbox=dict(facecolor="white", edgecolor="none", pad=0.5, alpha=0.85))
-        xmax = max(valores_o) * 1.22
         if mostrar:
             ax.axvline(cim_valor, color="#555555", linestyle="--", linewidth=1.2, zorder=2)
-            xmax = max(xmax, cim_valor * 1.22)
-        ax.set_xlim(min(0, min(valores_o) * 1.1), xmax)
+            xmin, xmax = _limites_eixo(valores_o, extra=cim_valor, frac=0.22)
+        else:
+            xmin, xmax = _limites_eixo(valores_o, frac=0.22)
+        ax.set_xlim(xmin, xmax)
         rotulo = p.get("cim_label", cim_label)
         titulo = p.get("title", "")
         if mostrar:
@@ -375,7 +388,7 @@ def so_milhares(texto):
     return re.sub(r"(?<=\d),(?=\d)", " ", texto)
 
 
-print("A gerar gráficos individuais (v2)...")
+print("A gerar gráficos...")
 
 # ═══════════════════════════════════════════════════════════════
 # SOCIEDADE
@@ -460,6 +473,22 @@ narrativas["soc_06"] = (
     f"em conjunto com indicadores de integração e acesso a serviços públicos."
 )
 
+# Ranking por município (a evolução acima só mostra o total da CIM) —
+# consistente com o resto do relatório, que compara sempre os 11 municípios.
+estr_ultimo_dados = df_estr[(df_estr["ano"] == ultimo_ano_estr) & (~df_estr["nome"].isin(["Portugal", "Lezíria do Tejo"]))].sort_values("nome")
+estr_cim_valor = valor_grupo(df_estr, "Lezíria do Tejo", ultimo_ano_estr)
+fig, ax = barh_ref_fig(estr_ultimo_dados["nome"].tolist(), estr_ultimo_dados["valor"].tolist(), estr_cim_valor,
+                        "#BF8F3F", title=f"População Estrangeira — % por Município ({int(ultimo_ano_estr)})", fmt="{:.1f}%")
+salvar(fig, "soc_06b_ranking_pop_estrangeira")
+
+estr_max = estr_ultimo_dados.loc[estr_ultimo_dados["valor"].idxmax()]
+estr_min = estr_ultimo_dados.loc[estr_ultimo_dados["valor"].idxmin()]
+narrativas["soc_06b"] = (
+    f"Em {int(ultimo_ano_estr)}, o peso da população estrangeira varia muito entre municípios: "
+    f"{estr_max['valor']:.1f}% em {estr_max['nome']}, face a apenas {estr_min['valor']:.1f}% em {estr_min['nome']} "
+    f"— uma diferença de {estr_max['valor'] - estr_min['valor']:.1f} pontos percentuais. A média da CIM é de {estr_cim_valor:.1f}%."
+)
+
 saldo_cim = df_saldo[df_saldo["nome"] != "Portugal"].groupby("ano")["valor"].sum()
 fig, ax = bar_fig(saldo_cim.index.astype(str).tolist(), {"": saldo_cim.values}, ["#BF9270"], title="Saldo Natural Anual — CIM", fmt="{:.0f}")
 ax.get_legend().remove() if ax.get_legend() else None
@@ -470,6 +499,23 @@ narrativas["soc_07"] = (
     f"O saldo natural (nascimentos menos óbitos) da CIM é negativo em todos os anos analisados, acumulando "
     f"{saldo_ac_cim:.0f} no período mais recente disponível. O crescimento populacional geral deve-se, portanto, "
     f"sobretudo a saldo migratório positivo."
+)
+
+# Ranking por município no último ano disponível
+ultimo_ano_saldo = df_saldo["ano"].max()
+saldo_ultimo_dados = df_saldo[(df_saldo["ano"] == ultimo_ano_saldo) & (~df_saldo["nome"].isin(["Portugal", "Lezíria do Tejo"]))].sort_values("nome")
+saldo_cim_valor = valor_grupo(df_saldo, "Lezíria do Tejo", ultimo_ano_saldo)
+fig, ax = barh_ref_fig(saldo_ultimo_dados["nome"].tolist(), saldo_ultimo_dados["valor"].tolist(), saldo_cim_valor,
+                        "#BF9270", title=f"Saldo Natural por Município ({int(ultimo_ano_saldo)})", fmt="{:.0f}", cim_label="CIM (média)")
+salvar(fig, "soc_07b_ranking_saldo_natural")
+
+saldo_max = saldo_ultimo_dados.loc[saldo_ultimo_dados["valor"].idxmax()]
+saldo_min = saldo_ultimo_dados.loc[saldo_ultimo_dados["valor"].idxmin()]
+n_negativos = int((saldo_ultimo_dados["valor"] < 0).sum())
+narrativas["soc_07b"] = (
+    f"Em {int(ultimo_ano_saldo)}, {n_negativos} dos 11 municípios da CIM têm saldo natural negativo (mais óbitos "
+    f"que nascimentos). {saldo_max['nome']} tem o saldo mais favorável ({saldo_max['valor']:.0f}), enquanto "
+    f"{saldo_min['nome']} tem o mais desfavorável ({saldo_min['valor']:.0f})."
 )
 
 nat_cim = df_nat[df_nat["nome"] != "Portugal"].groupby("ano")["valor"].mean()
@@ -483,6 +529,39 @@ salvar(fig, "soc_08_natalidade_mortalidade")
 narrativas["soc_08"] = (
     f"A taxa de mortalidade ({mort_cim.iloc[-1]:.1f}‰) mantém-se consistentemente acima da taxa de natalidade "
     f"({nat_cim.iloc[-1]:.1f}‰), um padrão demográfico comum em regiões do interior com população envelhecida."
+)
+
+# Ranking por município: natalidade e mortalidade lado a lado
+ultimo_ano_nat = df_nat["ano"].max()
+nat_dados = df_nat[(df_nat["ano"] == ultimo_ano_nat) & (~df_nat["nome"].isin(["Portugal", "Lezíria do Tejo"]))].sort_values("nome")
+mort_dados = df_mort_soc[(df_mort_soc["ano"] == ultimo_ano_nat) & (~df_mort_soc["nome"].isin(["Portugal", "Lezíria do Tejo"]))].sort_values("nome")
+nat_cim_valor = valor_grupo(df_nat, "Lezíria do Tejo", ultimo_ano_nat)
+mort_cim_valor = valor_grupo(df_mort_soc, "Lezíria do Tejo", ultimo_ano_nat)
+
+paineis_nat_mort = [
+    dict(labels=nat_dados["nome"].tolist(), valores=nat_dados["valor"].tolist(), cim_valor=nat_cim_valor,
+         color="#D9B48F", title="Taxa de Natalidade (‰)", fmt="{:.1f}"),
+    dict(labels=mort_dados["nome"].tolist(), valores=mort_dados["valor"].tolist(), cim_valor=mort_cim_valor,
+         color="#8B5E3C", title="Taxa de Mortalidade (‰)", fmt="{:.1f}"),
+]
+fig, axes = barh_ref_grid_fig(paineis_nat_mort, ncols=2, figsize=(12, 5.6))
+salvar(fig, "soc_08b_ranking_natalidade_mortalidade")
+
+nat_max = nat_dados.loc[nat_dados["valor"].idxmax()]
+mort_max = mort_dados.loc[mort_dados["valor"].idxmax()]
+nat_idx = nat_dados.set_index("nome")["valor"]
+mort_idx = mort_dados.set_index("nome")["valor"]
+n_mort_supera_nat = int((mort_idx.reindex(nat_idx.index) > nat_idx).sum())
+if n_mort_supera_nat == 11:
+    frase_padrao = "Em todos os 11 municípios a mortalidade supera a natalidade"
+elif n_mort_supera_nat == 0:
+    frase_padrao = "Em nenhum município a mortalidade supera a natalidade"
+else:
+    frase_padrao = f"Em {n_mort_supera_nat} dos 11 municípios a mortalidade supera a natalidade"
+narrativas["soc_08b"] = (
+    f"Em {int(ultimo_ano_nat)}, {nat_max['nome']} tem a taxa de natalidade mais alta da CIM ({nat_max['valor']:.1f}‰), "
+    f"e {mort_max['nome']} tem a taxa de mortalidade mais alta ({mort_max['valor']:.1f}‰). {frase_padrao}, "
+    f"um padrão consistente com o envelhecimento demográfico da região."
 )
 
 print("✓ Sociedade (8 gráficos)")

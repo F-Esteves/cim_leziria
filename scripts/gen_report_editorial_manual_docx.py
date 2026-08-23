@@ -12,7 +12,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CHARTS = BASE_DIR / "reports" / "charts_standalone"
+CHARTS = BASE_DIR / "reports" / "charts_standalone_manual"
 OUT_DIR = BASE_DIR / "reports"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -299,13 +299,16 @@ bloco_simples("Densidade Populacional", "soc_03_mapa_densidade", "soc_03", {"wid
 bloco_simples("Variação Populacional por Município", "soc_04_variacao_populacional", "soc_04")
 bloco_simples("População Estrangeira", "soc_05_mapa_populacao_estrangeira", "soc_05", {"width": 360})
 bloco_simples("Evolução da População Estrangeira", "soc_06_evolucao_pop_estrangeira", "soc_06")
+bloco_simples("População Estrangeira por Município", "soc_06b_ranking_pop_estrangeira", "soc_06b")
 bloco_simples("Saldo Natural", "soc_07_saldo_natural", "soc_07")
+bloco_simples("Saldo Natural por Município", "soc_07b_ranking_saldo_natural", "soc_07b")
 bloco_simples("Natalidade e Mortalidade", "soc_08_natalidade_mortalidade", "soc_08")
+bloco_simples("Natalidade e Mortalidade por Município", "soc_08b_ranking_natalidade_mortalidade", "soc_08b", {"width": 560})
 
 # ── Guarda o .docx ──
-out_docx = OUT_DIR / "Dashboard_CIM_Leziria_Editorial.docx"
+out_docx = OUT_DIR / "Dashboard_CIM_Leziria_Manual.docx"
 doc.save(out_docx)
-print("Documento editorial (Python) gerado com sucesso!")
+print("Documento gerado com sucesso!")
 
 # ── Conversão para PDF via LibreOffice headless ──
 SOFFICE_CANDIDATOS = [

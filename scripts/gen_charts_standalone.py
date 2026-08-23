@@ -351,7 +351,7 @@ def so_milhares(texto):
 
 from narrativa_engine import gerar_narrativa, avaliar_indicador
 
-print("A gerar gr\xe1ficos individuais (narrativas autom\xe1ticas)...")
+print("A gerar gr\xe1ficos (narrativas autom\xe1ticas)...")
 
 # ═══════════════════════════════════════════════════════════════
 # SOCIEDADE
@@ -425,11 +425,13 @@ salvar(fig, "soc_04_variacao_populacional")
 
 n_positivos = (var_ultimo["valor"] > 0).sum()
 
-narrativas["soc_04"] = gerar_narrativa(
-    chave="soc_variacao_populacional_anual",
-    valor_atual=n_positivos,
-    valor_anterior=None,
-    contexto={"sujeito": "o n\xfamero de munic\xedpios com varia\xe7\xe3o positiva", "ano_inicial": ultimo_ano_soc, "ano_final": ultimo_ano_soc},
+var_max_row = var_ultimo.loc[var_ultimo["valor"].idxmax()]
+var_min_row = var_ultimo.loc[var_ultimo["valor"].idxmin()]
+narrativas["soc_04"] = (
+    f"Em {int(ultimo_ano_soc)}, {n_positivos} dos 11 munic\xedpios da CIM registaram varia\xe7\xe3o populacional "
+    f"positiva. {var_max_row['nome']} teve o maior crescimento (+{var_max_row['valor']:.0f} habitantes), "
+    f"enquanto {var_min_row['nome']} teve {'a maior quebra' if var_min_row['valor'] < 0 else 'o crescimento mais baixo'} "
+    f"({var_min_row['valor']:+.0f} habitantes)."
 )
 
 ultimo_ano_estr = df_estr["ano"].max()
@@ -481,11 +483,15 @@ salvar(fig, "soc_07_saldo_natural")
 
 saldo_ac_cim = df_saldo_ac[(df_saldo_ac["nome"] != "Portugal") & (df_saldo_ac["ano"]==df_saldo_ac["ano"].max())]["valor"].sum()
 
-narrativas["soc_07"] = gerar_narrativa(
-    chave="soc_saldo_natural",
-    valor_atual=saldo_ac_cim,
-    valor_anterior=None,
-    contexto={"sujeito": "o saldo natural acumulado da CIM", "ano_inicial": None, "ano_final": None},
+ano_saldo_ini = saldo_cim.index[0]
+ano_saldo_fim = saldo_cim.index[-1]
+narrativas["soc_07"] = (
+    f"O saldo natural (nascimentos menos \xf3bitos) da CIM \xe9 negativo em todos os anos analisados "
+    f"({int(ano_saldo_ini)}\u2013{int(ano_saldo_fim)}), passando de {saldo_cim.iloc[0]:.0f} em {int(ano_saldo_ini)} "
+    f"para {saldo_cim.iloc[-1]:.0f} em {int(ano_saldo_fim)} \u2014 "
+    f"{'uma ligeira melhoria' if saldo_cim.iloc[-1] > saldo_cim.iloc[0] else 'um agravamento'}, mas ainda "
+    f"claramente negativo. O acumulado do per\xedodo \xe9 de {saldo_ac_cim:.0f}. O crescimento populacional geral "
+    f"da CIM deve-se, portanto, sobretudo a saldo migrat\xf3rio positivo, n\xe3o a crescimento natural."
 )
 
 # Ranking por munic\xedpio no \xfaltimo ano dispon\xedvel
@@ -1092,11 +1098,15 @@ farm_mun = df_farmaceuticos[(df_farmaceuticos["nome"]==MUNICIPIO_REF) & (df_farm
 dent_mun = df_dentistas[(df_dentistas["nome"]==MUNICIPIO_REF) & (df_dentistas["ano"]==ultimo_ano_saude)]["valor"].values[0]
 enf_mun = df_enfermeiros[(df_enfermeiros["nome"]==MUNICIPIO_REF) & (df_enfermeiros["ano"]==ultimo_ano_saude)]["valor"].values[0]
 
-narrativas["mdv_02"] = gerar_narrativa(
-    chave="mdv_medicos",
-    valor_atual=medicos_mun,
-    valor_anterior=None,
-    contexto={"sujeito": f"o n\xfamero de m\xe9dicos em {MUNICIPIO_REF}", "ano_inicial": ultimo_ano_saude, "ano_final": ultimo_ano_saude},
+medicos_min_mun = medicos_abs.idxmin()
+narrativas["mdv_02"] = (
+    f"Em n\xfamero absoluto de profissionais, {MUNICIPIO_REF} lidera nas quatro categorias \u2014 natural, j\xe1 que "
+    f"\xe9 o munic\xedpio mais populoso da CIM \u2014 com {medicos_mun:.0f} m\xe9dicos, {enf_mun:.0f} enfermeiros, "
+    f"{farm_mun:.0f} farmac\xeauticos e {dent_mun:.0f} dentistas em {int(ultimo_ano_saude)}. No extremo oposto, "
+    f"{medicos_min_mun} tem apenas {medicos_abs.min():.0f} m\xe9dicos e {enf_abs.idxmin()} tem {enf_abs.min():.0f} "
+    f"enfermeiros. Esta leitura mostra a dimens\xe3o real de cada equipa de sa\xfade local; para uma compara\xe7\xe3o "
+    f"da cobertura ajustada \xe0 popula\xe7\xe3o, ver os r\xe1cios de habitantes por m\xe9dico/farmac\xeautico mais \xe0 "
+    f"frente nesta sec\xe7\xe3o."
 )
 
 # 3. Utentes inscritos CSP na CIM
@@ -1107,11 +1117,12 @@ fig, axes = kpis_row_fig([
 ])
 salvar(fig, "mdv_03_kpi_utentes")
 
-narrativas["mdv_03"] = gerar_narrativa(
-    chave="mdv_utentes_csp",
-    valor_atual=utentes_cim,
-    valor_anterior=None,
-    contexto={"sujeito": "os utentes inscritos nos CSP na CIM", "ano_inicial": ultimo_ano_utentes, "ano_final": ultimo_ano_utentes},
+pct_cobertura_csp = utentes_cim / pop_fim * 100
+utentes_cim_fmt = f"{utentes_cim:,.0f}".replace(",", " ")
+narrativas["mdv_03"] = (
+    f"Em {int(ultimo_ano_utentes)}, a CIM tinha {utentes_cim_fmt} utentes inscritos nos Cuidados de Sa\xfade "
+    f"Prim\xe1rios (CSP) \u2014 o equivalente a {pct_cobertura_csp:.0f}% da popula\xe7\xe3o residente "
+    f"({int(ultimo_ano_soc)})."
 )
 
 # 4. Habitantes por M\xe9dico e por Farmac\xeautico
@@ -1132,11 +1143,13 @@ paineis_hab = [
 fig, axes = barh_ref_grid_fig(paineis_hab, ncols=2, figsize=(12, 5.6))
 salvar(fig, "mdv_04_hab_farmaceuticos_medicos")
 
-narrativas["mdv_04"] = gerar_narrativa(
-    chave="mdv_hab_medico",
-    valor_atual=hm_mun,
-    valor_anterior=None,
-    contexto={"sujeito": f"o n\xfamero de habitantes por m\xe9dico em {MUNICIPIO_REF}", "ano_inicial": ultimo_ano_saude, "ano_final": ultimo_ano_saude},
+hm_max_mun = hm_dados.loc[hm_dados["valor"].idxmax()]
+hf_max_mun = hf_dados.loc[hf_dados["valor"].idxmax()]
+narrativas["mdv_04"] = (
+    f"Em {MUNICIPIO_REF}, h\xe1 {hm_mun:.0f} habitantes por m\xe9dico e {hf_mun:.0f} habitantes por farmac\xeautico "
+    f"(m\xe9dia da CIM: {hm_cim:.0f} e {hf_cim:.0f}, respetivamente). A pior cobertura m\xe9dica \xe9 em "
+    f"{hm_max_mun['nome']} ({hm_max_mun['valor']:.0f} hab./m\xe9dico) e a pior cobertura farmac\xeautica \xe9 em "
+    f"{hf_max_mun['nome']} ({hf_max_mun['valor']:.0f} hab./farmac\xeautico)."
 )
 
 # 5. Consultas CSP na CIM

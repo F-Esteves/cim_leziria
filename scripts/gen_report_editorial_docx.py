@@ -421,9 +421,9 @@ bloco_simples("Natalidade e Mortalidade", "soc_08_natalidade_mortalidade", "soc_
 bloco_simples("Natalidade e Mortalidade por Município", "soc_08b_ranking_natalidade_mortalidade", "soc_08b", {"width": 560})
 
 # ── Guarda o .docx ──
-out_docx = OUT_DIR / "Dashboard_CIM_Leziria_Editorial.docx"
+out_docx = OUT_DIR / "Dashboard_CIM_Leziria.docx"
 doc.save(out_docx)
-print("Documento editorial (Python) gerado com sucesso!")
+print("Documento gerado com sucesso!")
 
 # ── Conversão para PDF via LibreOffice headless ──
 SOFFICE_CANDIDATOS = [
