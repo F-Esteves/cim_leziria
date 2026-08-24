@@ -170,8 +170,8 @@ def tabela_resumo():
     doc.add_heading("Síntese dos Indicadores", level=1)
     p = doc.add_paragraph(
         "Classificação automática da tendência e do cumprimento de metas para um conjunto de indicadores "
-        "representativo de cada domínio, gerada a partir das mesmas regras (narrativa_engine.py) que produzem "
-        "o texto do relatório — não há aqui avaliação qualitativa feita manualmente."
+        "representativo de cada domínio, gerada a partir das mesmas regras que produzem "
+        "o texto do relatório"
     )
     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     p.paragraph_format.space_after = Pt(6)

@@ -351,7 +351,7 @@ def so_milhares(texto):
 
 from narrativa_engine import gerar_narrativa, avaliar_indicador
 
-print("A gerar gr\xe1ficos (narrativas autom\xe1ticas)...")
+print("A gerar gr\xe1ficos individuais (v3 - narrativas autom\xe1ticas)...")
 
 # ═══════════════════════════════════════════════════════════════
 # SOCIEDADE
@@ -688,11 +688,11 @@ salvar(fig, "gov_13_telecom_evolucao")
 
 crescimento = ((cim_bl.values[-1] / cim_bl.values[0]) ** (1/(len(cim_bl)-1)) - 1) * 100
 
-narrativas["gov_13"] = gerar_narrativa(
-    chave="gov_banda_larga_100hab",
-    valor_atual=cim_bl.values[-1],
-    valor_anterior=cim_bl.values[0],
-    contexto={"sujeito": "o acesso a Banda Larga na CIM", "ano_inicial": anos_gov[0], "ano_final": anos_gov[-1]},
+narrativas["gov_13"] = (
+    f"Entre {anos_gov[0]} e {anos_gov[-1]}, o acesso a Telefone foi o mais generalizado na CIM ({cim_tel.values[-1]:.0f}% "
+    f"em {anos_gov[-1]}), seguido pela Banda Larga ({cim_bl.values[-1]:.0f}%) e pela TV por subscri\xe7\xe3o "
+    f"({cim_tv.values[-1]:.0f}%). A Banda Larga foi a que mais cresceu no per\xedodo, a um ritmo m\xe9dio de "
+    f"{crescimento:.1f}% ao ano."
 )
 
 fig, axes = kpis_row_fig([
@@ -1334,11 +1334,14 @@ pre_pct_range = tabela_niveis_mun["Pr\xe9-Escolar"]
 mun_mais_pre = municipios_edu[pre_pct_range.index(max(pre_pct_range))]
 mun_menos_pre = municipios_edu[pre_pct_range.index(min(pre_pct_range))]
 
-narrativas["mdv_10"] = gerar_narrativa(
-    chave="mdv_ensino_matriculados_pre_escolar_n",
-    valor_atual=valores_niveis[0],
-    valor_anterior=None,
-    contexto={"sujeito": f"o n\xfamero de alunos matriculados no Pr\xe9-Escolar em {MUNICIPIO_REF}", "ano_inicial": ultimo_ano_edu_serie, "ano_final": ultimo_ano_edu_serie},
+nomes_niveis = [n for n, _ in niveis]
+idx_maior = valores_niveis.index(max(valores_niveis))
+narrativas["mdv_10"] = (
+    f"Em {MUNICIPIO_REF} ({int(ultimo_ano_edu_serie)}), a distribui\xe7\xe3o de alunos matriculados por n\xedvel de "
+    f"ensino \xe9: {', '.join(f'{n} ({v:.0f})' for n, v in zip(nomes_niveis, valores_niveis))}. O n\xedvel com mais "
+    f"alunos \xe9 o {nomes_niveis[idx_maior]}. Entre os 11 munic\xedpios, o peso do Pr\xe9-Escolar no total de "
+    f"matriculados varia entre {min(pre_pct_range):.0f}% em {mun_menos_pre} e {max(pre_pct_range):.0f}% em "
+    f"{mun_mais_pre}, refletindo perfis demogr\xe1ficos distintos."
 )
 
 trans_h_v = df_trans_h[(df_trans_h["nome"]==MUNICIPIO_REF) & (df_trans_h["ano"]==ultimo_ano_edu_serie)]["valor"].mean()
@@ -1474,12 +1477,10 @@ fig, ax = barh_stacked100_fig(labels_ord, {"Agricultura": agri_ord, "Ind\xfastri
                                ["#F2C4C1", "#C0504D", "#772C2A"], title="Estrutura Setorial do Emprego, por Munic\xedpio")
 salvar(fig, "eco_03_estrutura_setorial_emprego")
 
-narrativas["eco_03"] = gerar_narrativa(
-    chave="eco_estrutura_servicos_pct",
-    valor_atual=serv_v[0],
-    valor_anterior=None,
-    contexto={"sujeito": "o peso do setor dos Servi\xe7os na CIM", "ano_inicial": None, "ano_final": None},
-    unidade="%",
+narrativas["eco_03"] = (
+    f"Na CIM, o setor dos Servi\xe7os domina a estrutura do emprego ({serv_v[0]:.0f}%), seguido pela Ind\xfastria "
+    f"({ind_v[0]:.0f}%) e pela Agricultura ({agri_v[0]:.0f}%). Em {MUNICIPIO_REF}, os Servi\xe7os representam "
+    f"{serv_v[1]:.0f}% do emprego, a Ind\xfastria {ind_v[1]:.0f}% e a Agricultura {agri_v[1]:.0f}%."
 )
 
 nasc_mun = df_nasc[df_nasc["nome"]==MUNICIPIO_REF].sort_values("ano")
@@ -1596,12 +1597,11 @@ salvar(fig, "eco_08_estrutura_vn")
 vn_ind_cim = valor_grupo(df_vn_ind, "Lez\xedria do Tejo", ultimo_ano_vn_est)
 vn_ind_mun = valor_grupo(df_vn_ind, MUNICIPIO_REF, ultimo_ano_vn_est)
 
-narrativas["eco_08"] = gerar_narrativa(
-    chave="eco_estrutura_vn_industria_pct",
-    valor_atual=vn_ind_mun,
-    valor_anterior=None,
-    contexto={"sujeito": f"o peso da Ind\xfastria no Volume de Neg\xf3cios em {MUNICIPIO_REF}", "ano_inicial": ultimo_ano_vn_est, "ano_final": ultimo_ano_vn_est},
-    unidade="%",
+narrativas["eco_08"] = (
+    f"Em {MUNICIPIO_REF} ({int(ultimo_ano_vn_est)}), a estrutura do Volume de Neg\xf3cios por setor \xe9: "
+    f"Ind\xfastria {vn_ind_mun:.0f}%, Servi\xe7os {vn_serv_all[municipios_vn.index(MUNICIPIO_REF)]:.0f}% e "
+    f"Agricultura {vn_agri_all[municipios_vn.index(MUNICIPIO_REF)]:.0f}%. Na m\xe9dia da CIM, a Ind\xfastria pesa "
+    f"{vn_ind_cim:.0f}%."
 )
 
 # Poder de Compra (\xcdndice per capita, base 100 = m\xe9dia nacional) \u2014 pequenos
